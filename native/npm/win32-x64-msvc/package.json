@@ -10,6 +10,15 @@
   ],
   "description": "Optional native (Rust) source scanner for rn-material-symbols.",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lnuvy/rn-material-symbols.git",
+    "directory": "native/npm/win32-x64-msvc"
+  },
+  "homepage": "https://github.com/lnuvy/rn-material-symbols#readme",
+  "bugs": {
+    "url": "https://github.com/lnuvy/rn-material-symbols/issues"
+  },
   "engines": {
     "node": ">=20"
   },

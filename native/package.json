@@ -12,6 +12,15 @@
     "oxc"
   ],
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lnuvy/rn-material-symbols.git",
+    "directory": "native"
+  },
+  "homepage": "https://github.com/lnuvy/rn-material-symbols#readme",
+  "bugs": {
+    "url": "https://github.com/lnuvy/rn-material-symbols/issues"
+  },
   "main": "index.js",
   "types": "index.d.ts",
   "files": [

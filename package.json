@@ -2,8 +2,23 @@
   "name": "rn-material-symbols",
   "version": "0.2.0",
   "description": "Google Material Symbols for React Native by name — only the icons your source uses are bundled.",
-  "keywords": ["react-native", "material-symbols", "material-icons", "icons", "svg", "metro"],
+  "keywords": [
+    "react-native",
+    "material-symbols",
+    "material-icons",
+    "icons",
+    "svg",
+    "metro"
+  ],
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lnuvy/rn-material-symbols.git"
+  },
+  "homepage": "https://github.com/lnuvy/rn-material-symbols#readme",
+  "bugs": {
+    "url": "https://github.com/lnuvy/rn-material-symbols/issues"
+  },
   "packageManager": "pnpm@10.19.0",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
