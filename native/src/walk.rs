@@ -372,12 +372,26 @@ pub(crate) mod tests {
         assert_eq!(to_slash(Path::new("a\\b/c")), "a\\b/c");
     }
 
+    /// The filesystem root `path.resolve('/')` yields: `/` on POSIX, the cwd's drive root (`D:\`) on Windows, where a
+    /// rooted path without a drive takes the current drive (Node `path.win32.resolve('/a')` is `D:\a`).
+    fn cwd_root() -> PathBuf {
+        std::env::current_dir().unwrap().components().take_while(|c| matches!(c, Component::Prefix(_) | Component::RootDir)).collect()
+    }
+
     #[test]
     fn resolve_is_lexical_like_path_resolve() {
         let cwd = std::env::current_dir().unwrap();
-        assert_eq!(resolve("/a/b/../c/./d/"), PathBuf::from("/a/c/d"));
-        assert_eq!(resolve("/.."), PathBuf::from("/"));
+        let root = cwd_root();
+        assert_eq!(resolve("/a/b/../c/./d/"), root.join("a").join("c").join("d"));
+        assert_eq!(resolve("/.."), root);
         assert_eq!(resolve("x/y/.."), cwd.join("x"));
         assert_eq!(resolve(""), cwd);
+        #[cfg(unix)]
+        assert_eq!(resolve("/a/b/../c/./d/"), PathBuf::from("/a/c/d"));
+        #[cfg(windows)]
+        {
+            assert_eq!(resolve(r"C:\a\b\..\c/./d\"), PathBuf::from(r"C:\a\c\d"));
+            assert_eq!(resolve(r"C:\.."), PathBuf::from(r"C:\"));
+        }
     }
 }

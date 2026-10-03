@@ -1,7 +1,7 @@
-import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { generateCorpus } from '../../scripts/lib/corpus';
 import { MATERIAL_SYMBOL_ALIASES, MATERIAL_SYMBOL_LEGACY, MATERIAL_SYMBOL_NAMES } from '../../src/generated/names';
 import type { NativeBinding } from '../../src/metro/nativeScanner';
 import { nativeCacheFile } from '../../src/metro/nativeScanner';
@@ -10,7 +10,6 @@ import { DEFAULT_EXCLUDE } from '../../src/metro/withMaterialSymbols';
 import { loadNative } from './loadNative';
 
 const d = loadNative() ? describe : describe.skip;
-const repo = path.join(__dirname, '..', '..');
 const unix = process.platform !== 'win32';
 
 /** Files that DEFAULT_EXCLUDE removes; each holds an icon name so a leak would show in byFile. */
@@ -54,7 +53,7 @@ d('native scan matches JS scan', () => {
   beforeAll(() => {
     dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rnms-corpus-'));
     outside = fs.mkdtempSync(path.join(os.tmpdir(), 'rnms-outside-'));
-    execFileSync('pnpm', ['exec', 'tsx', 'scripts/gen-corpus.ts', dir, '--files=2000', '--seed=7'], { cwd: repo });
+    generateCorpus(dir, 2000, 7);
     for (const rel of EXCLUDED_BY_DEFAULT) write(dir, rel, "export const a = 'home';\n");
     for (const rel of PRUNED_DIRS) write(dir, rel, "export const a = 'settings';\n");
     for (const [rel, code] of Object.entries(FLOW_FILES)) write(dir, rel, code);

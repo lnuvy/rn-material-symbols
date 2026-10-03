@@ -543,7 +543,7 @@ mod tests {
         let err = scan_impl(&opts(vec![r.to_string_lossy().into(), missing], vec![], None, "k")).err().unwrap();
         assert_eq!(
             err,
-            format!("[rn-material-symbols] source not found: {}/nope (check the 'sources' option)", r.to_string_lossy())
+            format!("[rn-material-symbols] source not found: {} (check the 'sources' option)", r.join("nope").to_string_lossy())
         );
     }
 
@@ -557,7 +557,7 @@ mod tests {
         let out = scan_impl(&opts(vec![s1, s2], vec![], None, "k")).unwrap();
         assert_eq!(out.files, 1);
         assert_eq!(out.by_file.len(), 1);
-        assert_eq!(out.by_file[0].0, format!("{}/src/a.ts", r.to_string_lossy()));
+        assert_eq!(out.by_file[0].0, r.join("src").join("a.ts").to_string_lossy());
     }
 
     /// Codex cross-check: a pre-1970 mtime used to collapse to 0.0, so the cache hit was decided
