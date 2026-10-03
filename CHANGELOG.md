@@ -6,6 +6,7 @@
 - New option `scanner: 'auto' | 'js' | 'native'` (default `'auto'`) and env var `RN_MATERIAL_SYMBOLS_SCANNER`. `'auto'` falls back to the JS scanner when no binary exists for the platform (silently) or when the binary fails to load or throws (with one log line). `'native'` fails with a clear error instead.
 - The Metro report line now ends with the scanner that ran: `· js` or `· native`.
 - The native scanner keeps its own cache file, `scan-cache.native.json`, next to `scan-cache.json`.
+- Fix: no false "was not found as a string literal" dev warning when an icon is added during HMR. The missing-icon warning now waits 2 s and re-checks the current registry first (dev only).
 - Publishing: the packages must be published with pnpm, platform packages first, then the loader, then this package (README "Before publishing").
 
 ## 0.1.0 — 2026-10-02

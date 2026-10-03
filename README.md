@@ -66,7 +66,7 @@ import { MaterialIcon } from 'rn-material-symbols';
 
 Any other `SvgProps` are passed to the underlying `Svg`. Under the hood it renders `<Svg viewBox="0 -960 960 960">` with one `<Path>`.
 
-If an icon is missing from the registry, the component does not crash. It renders an empty `Svg` of the same size and, in development, warns once per icon with a hint (see [Troubleshooting](#troubleshooting)).
+If an icon is missing from the registry, the component does not crash. It renders an empty `Svg` of the same size and, in development, warns once per icon with a hint (see [Troubleshooting](#troubleshooting)). The warning comes about 2 s after the first render and only if the icon is still missing then: during HMR, the file you saved can render once before the regenerated registry arrives.
 
 ## Options
 
