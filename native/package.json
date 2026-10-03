@@ -1,0 +1,51 @@
+{
+  "name": "rn-material-symbols-scanner-native",
+  "version": "0.2.0",
+  "description": "Optional native (Rust) source scanner for rn-material-symbols: finds the Material Symbols names used in React Native source. Installed automatically as an optional dependency; not meant to be used directly.",
+  "keywords": [
+    "rn-material-symbols",
+    "react-native",
+    "material-symbols",
+    "metro",
+    "scanner",
+    "napi-rs",
+    "oxc"
+  ],
+  "license": "Apache-2.0",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "optionalDependencies": {
+    "rn-material-symbols-scanner-native-darwin-arm64": "workspace:*",
+    "rn-material-symbols-scanner-native-darwin-x64": "workspace:*",
+    "rn-material-symbols-scanner-native-linux-x64-gnu": "workspace:*",
+    "rn-material-symbols-scanner-native-linux-arm64-gnu": "workspace:*",
+    "rn-material-symbols-scanner-native-linux-x64-musl": "workspace:*",
+    "rn-material-symbols-scanner-native-win32-x64-msvc": "workspace:*"
+  },
+  "napi": {
+    "binaryName": "scanner",
+    "targets": [
+      "aarch64-apple-darwin",
+      "x86_64-apple-darwin",
+      "x86_64-unknown-linux-gnu",
+      "aarch64-unknown-linux-gnu",
+      "x86_64-unknown-linux-musl",
+      "x86_64-pc-windows-msvc"
+    ]
+  },
+  "scripts": {
+    "build": "napi build --platform --release",
+    "build:debug": "napi build --platform"
+  },
+  "devDependencies": {
+    "@napi-rs/cli": "3.10.6"
+  }
+}

@@ -1,0 +1,10 @@
+packages:
+  - native
+  - native/npm/*
+
+# Keep the per-platform binary packages out of pnpm's hidden hoist dir (node_modules/.pnpm/node_modules,
+# which pnpm puts on NODE_PATH for package bins such as jest). Only the loader in native/ should reach
+# them, as in a consumer install; otherwise any directory resolves the binary package by name.
+hoistPattern:
+  - '*'
+  - '!rn-material-symbols-scanner-native-*'

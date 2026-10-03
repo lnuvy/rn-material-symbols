@@ -1,0 +1,19 @@
+{
+  "name": "rn-material-symbols-scanner-native-darwin-x64",
+  "version": "0.2.0",
+  "cpu": [
+    "x64"
+  ],
+  "main": "scanner.darwin-x64.node",
+  "files": [
+    "scanner.darwin-x64.node"
+  ],
+  "description": "Optional native (Rust) source scanner for rn-material-symbols.",
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=20"
+  },
+  "os": [
+    "darwin"
+  ]
+}

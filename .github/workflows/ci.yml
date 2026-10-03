@@ -1,0 +1,41 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: node scripts/check-versions.mjs
+      - run: pnpm build:icons
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm build
+      # pnpm pack, not npm pack: only pnpm rewrites the workspace:* optional dependency on the native
+      # scanner, so this checks the manifest a pnpm publish ships. (pnpm 10 has no pack --dry-run.)
+      # grep without -q reads all input, so tar never dies of SIGPIPE under the pipefail shell.
+      - name: pack
+        shell: bash
+        run: |
+          OUT="$RUNNER_TEMP/pack"
+          mkdir -p "$OUT"
+          TGZ="$(pnpm pack --pack-destination "$OUT" | tail -n 1)"
+          [ -f "$TGZ" ] || { echo "missing tarball: $TGZ"; exit 1; }
+          tar -tzf "$TGZ" >/dev/null || { echo "unreadable tarball: $TGZ"; exit 1; }
+          tar -xOzf "$TGZ" package/package.json | grep '"workspace:' >/dev/null && { echo "unrewritten workspace: in $TGZ"; exit 1; }
+          tar -tzf "$TGZ" | grep '^package/native/' >/dev/null && { echo "native/ leaked into $TGZ"; exit 1; }
+          node scripts/check-versions.mjs --packed "$OUT"
+          echo "ok: $TGZ ($(tar -tzf "$TGZ" | wc -l) files)"

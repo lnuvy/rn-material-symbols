@@ -1,0 +1,19 @@
+{
+  "name": "rn-material-symbols-scanner-native-win32-x64-msvc",
+  "version": "0.2.0",
+  "cpu": [
+    "x64"
+  ],
+  "main": "scanner.win32-x64-msvc.node",
+  "files": [
+    "scanner.win32-x64-msvc.node"
+  ],
+  "description": "Optional native (Rust) source scanner for rn-material-symbols.",
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=20"
+  },
+  "os": [
+    "win32"
+  ]
+}

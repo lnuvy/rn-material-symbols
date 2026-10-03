@@ -1,0 +1,22 @@
+{
+  "name": "rn-material-symbols-scanner-native-linux-x64-musl",
+  "version": "0.2.0",
+  "cpu": [
+    "x64"
+  ],
+  "main": "scanner.linux-x64-musl.node",
+  "files": [
+    "scanner.linux-x64-musl.node"
+  ],
+  "description": "Optional native (Rust) source scanner for rn-material-symbols.",
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=20"
+  },
+  "os": [
+    "linux"
+  ],
+  "libc": [
+    "musl"
+  ]
+}

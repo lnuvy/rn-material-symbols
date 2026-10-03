@@ -1,0 +1,16 @@
+.superpowers/
+# local working notes (not part of the project)
+BRIEF.md
+HANDOFF.md
+node_modules/
+/lib/
+/icons/
+coverage/
+*.tgz
+example/node_modules/
+example/ios/Pods/
+example/.rnms-poc/
+example-expo/node_modules/
+.rn-material-symbols/
+native/target/
+native/*.node

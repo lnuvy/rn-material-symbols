@@ -1,0 +1,206 @@
+# Optional native scanner (native/): prebuilt binaries for the six napi targets, JS↔Rust parity run
+# against exactly those binaries on a machine that can load each one, and the npm package layout
+# assembled from them. No publish job and no secrets: publishing stays a manual step
+# (README "Before publishing").
+name: native
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build:
+    name: build ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - host: macos-latest
+            target: aarch64-apple-darwin
+            build: pnpm exec napi build --platform --release --target aarch64-apple-darwin
+          - host: macos-latest
+            target: x86_64-apple-darwin
+            build: pnpm exec napi build --platform --release --target x86_64-apple-darwin
+          - host: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            build: pnpm exec napi build --platform --release --target x86_64-unknown-linux-gnu --use-napi-cross
+          - host: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            build: pnpm exec napi build --platform --release --target aarch64-unknown-linux-gnu --use-napi-cross
+          - host: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            build: pnpm exec napi build --platform --release --target x86_64-unknown-linux-musl -x
+          - host: windows-latest
+            target: x86_64-pc-windows-msvc
+            build: pnpm exec napi build --platform --release --target x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.host }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native
+          key: ${{ matrix.target }}
+      # stacker (deep-nesting guard) builds psm with the `cc` crate, so every target needs a C
+      # compiler and assembler for that target: Xcode clang on macOS, MSVC on Windows, the napi-cross
+      # GCC toolchain for the gnu targets and zig (via cargo-zigbuild, `-x`) for musl.
+      - uses: mlugg/setup-zig@v2
+        if: contains(matrix.target, 'musl')
+        with:
+          version: 0.14.1
+      - uses: taiki-e/install-action@v2
+        if: contains(matrix.target, 'musl')
+        with:
+          tool: cargo-zigbuild
+      - run: pnpm install --frozen-lockfile
+      - name: build
+        working-directory: native
+        run: ${{ matrix.build }}
+      # napi build regenerates the loader and its typings; a diff means the committed ones are stale
+      - name: loader drift
+        run: git diff --exit-code native/index.js native/index.d.ts
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bindings-${{ matrix.target }}
+          path: native/scanner.*.node
+          if-no-files-found: error
+
+  parity:
+    # Loads the shipped artifact, not a fresh host build: every published .node (including the
+    # cross-built ones) must pass the JS↔Rust parity suite on a machine that can load it.
+    # No Rust toolchain here, so nothing can be rebuilt by accident. RNMS_REQUIRE_NATIVE=1 turns the
+    # "binary not found" skip in test/parity into a failure.
+    name: parity ${{ matrix.target }}
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-latest
+            target: aarch64-apple-darwin
+          # Intel macOS runner label (Unverified: GitHub's x64 macOS labels change as images retire).
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+          - runner: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+          - runner: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            container: node:22-alpine
+          - runner: windows-latest
+            target: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.runner }}
+    container: ${{ matrix.container }}
+    steps:
+      - name: alpine tools
+        if: matrix.container
+        shell: sh
+        run: apk add --no-cache bash git tar
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        if: ${{ !matrix.container }}
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build:icons
+      - uses: actions/download-artifact@v4
+        with:
+          name: bindings-${{ matrix.target }}
+          path: native
+      - name: the artifact is the only binary and it loads
+        run: |
+          ls -l native/*.node
+          [ "$(ls native/*.node | wc -l)" -eq 1 ] || { echo "expected exactly one .node"; exit 1; }
+          node -e "const b = require('./native'); console.log('loaded', b.version())"
+      - run: pnpm jest test/parity
+        env:
+          RNMS_REQUIRE_NATIVE: '1'
+
+  rust-test:
+    # The stack-depth table for release builds is only exercised by a release-profile test run.
+    name: cargo test --release ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native
+      - run: cargo test --release --manifest-path native/Cargo.toml
+
+  assemble:
+    # Collects the six binaries into native/npm/<platform>/, checks that every platform package is
+    # complete (napi pre-publish --dry-run: no file changes, no publish), that all versions agree,
+    # and uploads the tarballs that a release would publish. Publishing them is a manual step.
+    needs: [build, parity]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: node scripts/check-versions.mjs
+      - uses: actions/download-artifact@v4
+        with:
+          path: native/artifacts
+          pattern: bindings-*
+      - name: napi artifacts
+        working-directory: native
+        run: pnpm exec napi artifacts -o artifacts
+      - name: napi pre-publish --dry-run
+        working-directory: native
+        run: pnpm exec napi pre-publish -t npm --dry-run
+      - name: pack (pnpm rewrites workspace:* to versions)
+        # grep without -q reads all input, so tar never dies of SIGPIPE under the pipefail shell.
+        run: |
+          OUT="$RUNNER_TEMP/npm"
+          mkdir -p "$OUT"
+          pack() { (cd "$1" && pnpm pack --pack-destination "$OUT" | tail -n 1); }
+          check() {
+            [ -f "$1" ] || { echo "missing tarball: $1"; exit 1; }
+            tar -tzf "$1" >/dev/null || { echo "unreadable tarball: $1"; exit 1; }
+            tar -xOzf "$1" package/package.json | grep '"workspace:' >/dev/null && { echo "unrewritten workspace: in $1"; exit 1; }
+            return 0
+          }
+          for dir in native/npm/*/; do
+            platform="$(basename "$dir")"
+            TGZ="$(pack "$dir")"
+            check "$TGZ"
+            tar -tzf "$TGZ" | grep "^package/scanner\.$platform\.node\$" >/dev/null || { echo "no scanner.$platform.node in $TGZ"; exit 1; }
+          done
+          check "$(pack native)"
+          ROOT_TGZ="$(pack .)"
+          check "$ROOT_TGZ"
+          tar -tzf "$ROOT_TGZ" | grep '^package/native/' >/dev/null && { echo "native/ leaked into $ROOT_TGZ"; exit 1; }
+          node scripts/check-versions.mjs --packed "$OUT"
+          ls -l "$OUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: npm-tarballs
+          path: ${{ runner.temp }}/npm/*.tgz
+          if-no-files-found: error
