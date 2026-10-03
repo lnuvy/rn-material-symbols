@@ -10,7 +10,7 @@ Google Material Symbols for React Native, by name. Only the icons your source co
 
 - **Metro (as used by bare React Native) does not tree-shake unused entries out of an icon map, and Expo's tree shaking is experimental and opt-in.** Importing a package that exposes thousands of icons ships all of them. This library generates a small registry at Metro start-up that contains only the icons your source mentions.
 - **Name-based API.** No per-icon imports or registration step. 3,927 symbols plus legacy names, type-checked.
-- **Pure JS plus `react-native-svg`** at runtime — no font files and no native code in your app — so it should work with OTA updates such as CodePush (not yet verified end to end). The optional native scanner (see [Performance and the native scanner](#performance-and-the-native-scanner)) runs only inside Metro, on your machine, and never ships in the app.
+- **Pure JS plus `react-native-svg`** at runtime — no font files and no native code in your app — so it should work with OTA updates such as CodePush: two release bundles that differ by one added icon differ only in the JS bundle, with identical assets (a real CodePush deployment is not verified). The optional native scanner (see [Performance and the native scanner](#performance-and-the-native-scanner)) runs only inside Metro, on your machine, and never ships in the app.
 
 ## Install
 
@@ -41,7 +41,7 @@ const { withMaterialSymbols } = require('rn-material-symbols/metro');
 module.exports = withMaterialSymbols(getDefaultConfig(__dirname));
 ```
 
-Verified with Expo SDK 57 (`expo` 57.0.26, React Native 0.86.3, `react-native-svg` 15.15.4 from `npx expo install`): `npx expo export --platform ios --platform web` bundles exactly the icons used in source, in both the iOS Hermes bytecode and the web JavaScript bundle (`example-expo/`, `pnpm e2e:expo`). In Hermes bytecode, an icon path that is a substring of another icon's path cannot be told apart, so the bytecode check can miss an extra or missing icon in that case; the web bundle from the same export is checked exactly. Not verified: rendering on a device or simulator with Expo, Expo Go, and dev-server HMR with Expo. See [Verification status](#verification-status).
+Verified with Expo SDK 57 (`expo` 57.0.26, React Native 0.86.3, `react-native-svg` 15.15.4 from `npx expo install`): `npx expo export --platform ios --platform web` bundles exactly the icons used in source, in both the iOS Hermes bytecode and the web JavaScript bundle (`example-expo/`, `pnpm e2e:expo`). In Hermes bytecode, an icon path that is a substring of another icon's path cannot be told apart, so the bytecode check can miss an extra or missing icon in that case; the web bundle from the same export is checked exactly. On the iOS simulator, the dev build renders and picks up an added icon through HMR in about 0.54 s, Expo Go 57.0.9 renders, and Expo web renders in Chromium with SVG paths that match the package's icons. Not verified: Expo on Android, real devices, HMR in Expo Go or on the web. See [Verification status](#verification-status).
 
 ## Usage
 
@@ -149,7 +149,7 @@ module.exports = {
 
 Tests then resolve every icon, with no Metro involved.
 
-With npm and Yarn 1 the `react-native` preset works as is (verified with a bare React Native 0.78.3 app, real `react-native-svg`, no mocks).
+With npm, Yarn 1 and Bun the `react-native` preset works as is (verified with a bare React Native 0.78.3 app, real `react-native-svg`, no mocks).
 
 With pnpm, the preset's default `transformIgnorePatterns` skips everything under `node_modules/.pnpm`, so React Native's own Jest setup fails with `SyntaxError: Unexpected identifier 'ErrorHandler'` before any test runs. This is a pnpm and React Native preset issue, not specific to this library. Allow `.pnpm` through:
 
@@ -161,6 +161,10 @@ module.exports = {
   transformIgnorePatterns: ['node_modules/(?!(\\.pnpm|(jest-)?react-native|@react-native(-community)?)/)'],
 };
 ```
+
+## Using outside Metro (webpack, Vite, Next)
+
+The registry is built by the Metro plugin. Without Metro, `rn-material-symbols/registry` resolves to an empty stub: every icon renders blank and the dev warning says `withMaterialSymbols is not configured`. Icons render only when `rn-material-symbols/registry` is aliased to the full registry at `<package root>/lib/registry/all.js` (an absolute path, as `rn-material-symbols/jest` does; `lib/` is not in the package `exports`). That registry has no pruning, and it loads icon files from disk with `fs` and a runtime `require`, the way Jest needs. It was checked only in Node (react-native-web 0.20 `renderToString` produced the correct path). A browser build with a real web bundler is not verified, and the `fs`-based loading is not expected to work there.
 
 ## Troubleshooting
 
@@ -244,19 +248,27 @@ Run by a maintainer, in this order. Publish with pnpm: it rewrites the `workspac
 1. Bump the version in `package.json`, `native/package.json` and `native/Cargo.toml`, then `pnpm --filter rn-material-symbols-scanner-native exec napi version` to sync `native/npm/*/package.json`, rebuild so `native/index.js` pins the new version, and run `node scripts/check-versions.mjs`.
 2. Get the six binaries from the `build` job of `.github/workflows/native.yml` (artifacts `bindings-<target>`), put them in `native/artifacts/`, and run `pnpm exec napi artifacts -o artifacts` in `native/`. Check with `pnpm exec napi pre-publish -t npm --dry-run` in `native/`: it fails if any platform package lacks its `.node` (the `assemble` job runs the same check and uploads the tarballs).
 3. Release gate on a machine with a Rust toolchain: `PMS="npm-native npm-js" bash e2e/consumer.sh` verifies whatever is assembled for this machine: it packs a temp copy of the platform package (using the `.node` from step 2 untouched, printing `using assembled artifact … (sha256 …)`; only when none is assembled does it build one into the temp copy and print `using local build`; it never writes into `native/npm/`), installs the platform, loader and library tarballs into a fresh React Native app and asserts the report line ends with `· native`, and with `· js` without the platform tarball.
-4. Recommended (Unverified): publish all eight packages to a local registry such as Verdaccio first, and install the library from it with npm, pnpm and Yarn 1.
-5. Publish the six platform packages first (`pnpm publish` in each `native/npm/<platform>/`) and confirm each one with `npm view <package>@<version> version`. Only then publish the loader (`pnpm publish` in `native/`), confirm it the same way, and publish the library last (`pnpm publish` at the root). Order matters: Yarn 1 refuses to install a package whose optional dependency is not on the registry (`Couldn't find package "rn-material-symbols-scanner-native@…"`), so the library must not be published before the loader, nor the loader before all six platform packages.
+4. Recommended (Unverified): publish all eight packages to a local registry such as Verdaccio first, and install the library from it with npm, pnpm, Yarn 1, Yarn Berry and Bun.
+5. Publish the six platform packages first (`pnpm publish` in each `native/npm/<platform>/`) and confirm each one with `npm view <package>@<version> version`. Only then publish the loader (`pnpm publish` in `native/`), confirm it the same way, and publish the library last (`pnpm publish` at the root). Order matters: Yarn 1 and Yarn Berry 4 refuse to install a package whose optional dependency is not on the registry (Yarn 1: `Couldn't find package "rn-material-symbols-scanner-native@…"`; Yarn Berry: `YN0035 … Package not found`, 404), so the library must not be published before the loader, nor the loader before all six platform packages.
 
 ## Verification status
 
-Verified (details and commands in `docs/poc/2026-10-e2e-consumer.md`):
+Verified (details and commands in `docs/poc/2026-10-e2e-consumer.md`; the items dated 2026-10-03 were run from local clones, and their logs and screenshots are not committed):
 
-- Bare React Native 0.78.3 installed from the packed tarball with npm, pnpm 10.19 and Yarn 1.22.22 (version 0.1.0; from 0.2.0 on, Yarn 1 can install the library only once the native packages of the same version are on the registry, so `e2e/consumer.sh` skips Yarn until then): production bundles for iOS and Android (`react-native bundle --dev false`). The bundled icon set exactly equals the icons used in source (literal, ternary, template literal, config object in another file, alias, `include` safelist), and the 3,927-name list does not leak into the bundle.
+- Bare React Native 0.78.3 installed from the packed tarball with npm, pnpm 10.19 and Yarn 1.22.22 (version 0.1.0; from 0.2.0 on, Yarn 1 and Yarn Berry can install the library only once the native packages of the same version are on the registry, so `e2e/consumer.sh` skips Yarn until then): production bundles for iOS and Android (`react-native bundle --dev false`). The bundled icon set exactly equals the icons used in source (literal, ternary, template literal, config object in another file, alias, `include` safelist), and the 3,927-name list does not leak into the bundle.
 - Jest with the setup from this README (real `react-native-svg`, no mocks) renders the `info` path under npm, pnpm and Yarn 1. pnpm needs the `transformIgnorePatterns` shown above.
 - Expo SDK 57: `expo export` for iOS (Hermes bytecode) and web. The exact set holds in the web bundle. In the bytecode the check is lenient for one case: Hermes stores a string that is a substring of another inside it, so an icon whose path is contained in another icon's path cannot be confirmed separately (`check_box_outline_blank` inside `check_box` here). That icon is reported as unconfirmed, and the web bundle from the same export confirms it.
-- iOS simulator rendering of the bare React Native 0.78.3 example (`example/`, iPhone 17 simulator, iOS 26.5, details in `docs/poc/2026-10-e2e-ios.md`): all 8 icons render on the New Architecture (Fabric confirmed in the console) and with the New Architecture turned off (`RCT_NEW_ARCH_ENABLED=0`).
-- Dev-mode HMR on the New Architecture: an icon added to `App.tsx` appeared about 8 s after saving, with the watcher rescan visible in the Metro log (latency below 8 s not measured).
-  - Caveats for both iOS results: they were rendered with an out-of-repo Metro config carrying the same `blockList` rule that is now committed in `example/metro.config.js`. The committed config was verified by a bundle check (react-native copies 2 to 1), not by re-running the simulator. The toggle tap was not tested. Under Xcode 26.6, React Native 0.78 needed a local `Pods/fmt` patch (a toolchain issue, not the library). Android was not tried.
+- iOS simulator rendering of the bare React Native 0.78.3 example (`example/`, iPhone 17 simulator, iOS 26.5, details in `docs/poc/2026-10-e2e-ios.md`): all 8 icons render on the New Architecture (Fabric confirmed in the console) and with the New Architecture turned off (`RCT_NEW_ARCH_ENABLED=0`). Those first runs used an out-of-repo Metro config.
+- Second iOS simulator round (2026-10-03, committed `example/metro.config.js` unmodified, New Architecture):
+  - Native scanner: report line ending in `· native`, all 8 icons render.
+  - Dev-mode HMR, 3 saves per engine, each adding an icon to `App.tsx`: median save to rescan line 108 ms (mostly the watcher's 100 ms debounce; the scan itself took 3–7 ms on this 2-file app), save to icon visible about 0.45 s with the native scanner and about 0.49 s with the JS scanner. Visibility was polled with simulator screenshots, which take about 250–300 ms each, so that is the resolution. Numbers from a 2-file app say nothing about scan cost in large projects.
+  - Release configuration on the simulator: all 8 icons render with no Metro running. The Hermes bytecode (`main.jsbundle`) holds the exact icon set, with the substring caveat described for Expo above (`check_box_outline_blank` unconfirmed).
+  - Not tested: the toggle tap, and the New Architecture turned off in this round. Under Xcode 26.6, React Native 0.78 needed a local `Pods/fmt` patch (a toolchain issue, not the library).
+- Expo SDK 57 on the iOS simulator (2026-10-03): the dev build renders all 6 icons on screen; HMR, 3 saves, median save to rescan line 146 ms and save to icon visible about 0.54 s. Expo Go 57.0.9 renders the same icons (HMR in Expo Go not measured). Expo web from `expo start --web`, opened in Chromium: 6 `svg` elements whose `path d` values match the package's icon files, no console errors or warnings.
+- Hermes bytecode of the bare React Native production bundles (iOS and Android, compiled with React Native's `hermesc -O`): the exact icon set, with the same substring caveat (`check_box_outline_blank` unconfirmed). The bytecode was not executed.
+- OTA-equivalent check (not a CodePush deployment): release bundles v1 and v2 (v2 adds one icon) built for iOS and Android. Each holds its exact icon set, and only the JS bundle file differs between them; the asset files are identical.
+- Package managers on 0.2.0 tarballs (bare React Native 0.78.3, macOS arm64): Bun 1.4.2 installs the library alone (only 404 warnings for the unpublished native packages; report line `· js`) and with the native tarballs (`· native`); the iOS and Android bundles hold the exact icon set and Jest passes. Yarn Berry 4.14.1 (`nodeLinker: node-modules`) fails before the native packages are published, as Yarn 1 does; with `resolutions` pointing the optional packages to local tarballs (an emulation, not a normal install) bundles and Jest pass.
+- react-native-web in Node: with `rn-material-symbols/registry` aliased to `lib/registry/all.js`, `renderToString` produces the correct `svg` and `path`; with the default stub it renders an empty `svg` and the "not configured" warning. See [Using outside Metro](#using-outside-metro-webpack-vite-next).
 - Linux (`node:22` container, Linux 6.12): install, icon build, typecheck and the full test suite, including the Linux per-directory watcher branch.
 - Scanner benchmark on a 4,111-file monorepo-sized app (G3).
 - Native scanner (macOS arm64): the packed platform, loader and library tarballs installed with npm into a fresh bare React Native 0.78.3 app give a report line ending in `· native`, and without the platform tarball `· js` with no error or warning; both bundles hold the exact icon set and Jest passes (`PMS="npm-native npm-js" bash e2e/consumer.sh`). JS↔native parity on the test suite and on two 50,000-file corpora (`docs/poc/2026-10-native-g4.md`).
@@ -264,15 +276,13 @@ Verified (details and commands in `docs/poc/2026-10-e2e-consumer.md`):
 
 Not yet verified:
 
-- Android emulator or device rendering, real iOS devices, and release (non-dev) builds on a device
-- Expo simulator or device rendering and dev-mode HMR
-- Expo Go rendering, and `expo start` end to end (only the watch decision was checked, as a unit)
-- Expo Web rendering in a browser (the bundle was checked, not the page)
-- CodePush OTA, end to end
-- Hermes bytecode of the bare React Native bundles (only Expo's was inspected)
-- react-native-web outside Expo
+- Android emulator or device rendering, HMR and release builds, with or without Expo (an earlier partial run is not counted), and real iOS devices
+- HMR in Expo Go and on the web, and Expo web's static `expo export` output served in a browser (only the dev server page was opened)
+- The HMR fix for the false "not found as a string literal" dev warning (unit-tested only; not re-run on a simulator)
+- A real CodePush deployment (only the OTA-equivalent bundle comparison above)
+- react-native-web in a browser with a real web bundler (webpack, Vite, Next)
 - Windows and macOS file-watching of directories created at runtime
-- Yarn Berry, Bun
+- Yarn Berry with the PnP linker, Bun running Metro on its own runtime (`bun --bun`), and installs from a published registry with any package manager
 - The native scanner on Windows and on Linux x64, and the cross-built release binaries in general (CI builds and tests them; it has not run yet). Installing it from the registry with pnpm or Yarn 1 (only local tarballs with npm were tested; see [Before publishing](#before-publishing))
 
 The peer ranges (`react-native >=0.72`, `react >=18`, `react-native-svg >=13`) were tested only with React Native 0.78.3 / React 19.0.0 / react-native-svg 15.13.0 (bare) and React Native 0.86.3 / React 19.2.3 / react-native-svg 15.15.4 (Expo SDK 57). Nothing below those versions was run.
