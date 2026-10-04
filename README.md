@@ -237,6 +237,13 @@ Every icon the JS scanner finds in a value position (code that runs: JSX props, 
 
 - Build: `pnpm build:native` (needs a Rust toolchain and a C compiler). Tests: `pnpm test:native` and `cargo test --release --manifest-path native/Cargo.toml`; the stack-depth table is only exercised by the release run. `pnpm test` runs the JS↔Rust parity tests when a binary is present and skips them otherwise; set `RNMS_REQUIRE_NATIVE=1` to make a missing binary fail instead.
 - After pulling the change that added `native/npm/*` to the workspace, delete and reinstall `node_modules` (`rm -rf node_modules native/node_modules && pnpm install`): the `hoistPattern` in `pnpm-workspace.yaml` only applies to a fresh install, and one test fails with a "reinstall node_modules" message until then.
+- Android emulator rendering of the bare React Native 0.78.3 example (2026-10-05, Pixel 7 AVD, API 35, arm64-v8a, at commit 161546d, `example/` unmodified except `newArchEnabled` toggled for the Old Architecture run; logs and screenshots are not committed):
+  - Debug build, New Architecture (`fabric: true` in logcat), native scanner: report line `2 files (5ms) · native`, all 8 icons render.
+  - Dev-mode HMR, 3 saves per engine: save to rescan line 104-106 ms with both engines; save to icon visible median 745 ms (native) and 713 ms (JS), polled with `screencap` at about 350-400 ms resolution. No "was not found" warning in any of the 6 reps, while a control with a non-icon name did warn. This confirms the deferred missing-icon warning fix on a real HMR.
+  - Release build (Hermes bytecode, Metro stopped): all 8 icons render. The bytecode holds the exact icon set, with the same substring caveat (`check_box_outline_blank` unconfirmed).
+  - Old Architecture (`newArchEnabled=false`), debug: all 8 icons render.
+  - Toggle tap works on both architectures (the checkbox toggles and returns to an identical screenshot on the second tap).
+- Native scanner CI (GitHub Actions run 37217141591 at commit 161546d): all 6 targets build (aarch64 and x86_64 apple-darwin, x86_64 and aarch64 linux-gnu, x86_64 linux-musl, x86_64 windows-msvc). The parity suite with `RNMS_REQUIRE_NATIVE=1` passes against each CI-built binary on its own runner (Windows included; musl in an Alpine container), `cargo test --release` passes on macOS, Ubuntu and Windows, and the `assemble` job (packaging and version check) passes. The `ci` run 37217141572 passes on macOS and Ubuntu. Benchmarks were run only on macOS arm64.
 - `node scripts/check-versions.mjs` checks that the root, loader, platform packages, `native/Cargo.toml` and the loader's pinned version agree; `--packed <dir>` also checks packed tarballs.
 - When upgrading oxc, re-run the stack-headroom binary search: measure the depth at which each construct overflows a 2 MB thread with the stack guard bypassed, update `OVERFLOW_AT_2MB` and, if the 2x headroom no longer holds, `STACK_PER_PUNCT_BYTE` / `STACK_PER_OTHER_BYTE` / `MAX_NESTING` in `native/src/extract.rs`. A native stack overflow kills Metro and cannot be caught.
 - Restart Metro after rebuilding the binary (see above).
@@ -263,9 +270,9 @@ Verified (details and commands in `docs/poc/2026-10-e2e-consumer.md`; the items 
   - Native scanner: report line ending in `· native`, all 8 icons render.
   - Dev-mode HMR, 3 saves per engine, each adding an icon to `App.tsx`: median save to rescan line 108 ms (mostly the watcher's 100 ms debounce; the scan itself took 3–7 ms on this 2-file app), save to icon visible about 0.45 s with the native scanner and about 0.49 s with the JS scanner. Visibility was polled with simulator screenshots, which take about 250–300 ms each, so that is the resolution. Numbers from a 2-file app say nothing about scan cost in large projects.
   - Release configuration on the simulator: all 8 icons render with no Metro running. The Hermes bytecode (`main.jsbundle`) holds the exact icon set, with the substring caveat described for Expo above (`check_box_outline_blank` unconfirmed).
-  - Not tested: the toggle tap, and the New Architecture turned off in this round. Under Xcode 26.6, React Native 0.78 needed a local `Pods/fmt` patch (a toolchain issue, not the library).
+  - Not tested: the toggle tap (iOS), and the New Architecture turned off in this round. Under Xcode 26.6, React Native 0.78 needed a local `Pods/fmt` patch (a toolchain issue, not the library).
 - Expo SDK 57 on the iOS simulator (2026-10-03): the dev build renders all 6 icons on screen; HMR, 3 saves, median save to rescan line 146 ms and save to icon visible about 0.54 s. Expo Go 57.0.9 renders the same icons (HMR in Expo Go not measured). Expo web from `expo start --web`, opened in Chromium: 6 `svg` elements whose `path d` values match the package's icon files, no console errors or warnings.
-- Hermes bytecode of the bare React Native production bundles (iOS and Android, compiled with React Native's `hermesc -O`): the exact icon set, with the same substring caveat (`check_box_outline_blank` unconfirmed). The bytecode was not executed.
+- Hermes bytecode of the bare React Native production bundles (iOS and Android, compiled with React Native's `hermesc -O`): the exact icon set, with the same substring caveat (`check_box_outline_blank` unconfirmed). The bytecode was not executed in this check (the Android release build was run on an emulator, see above).
 - OTA-equivalent check (not a CodePush deployment): release bundles v1 and v2 (v2 adds one icon) built for iOS and Android. Each holds its exact icon set, and only the JS bundle file differs between them; the asset files are identical.
 - Package managers on 0.2.0 tarballs (bare React Native 0.78.3, macOS arm64): Bun 1.4.2 installs the library alone (only 404 warnings for the unpublished native packages; report line `· js`) and with the native tarballs (`· native`); the iOS and Android bundles hold the exact icon set and Jest passes. Yarn Berry 4.14.1 (`nodeLinker: node-modules`) fails before the native packages are published, as Yarn 1 does; with `resolutions` pointing the optional packages to local tarballs (an emulation, not a normal install) bundles and Jest pass.
 - react-native-web in Node: with `rn-material-symbols/registry` aliased to `lib/registry/all.js`, `renderToString` produces the correct `svg` and `path`; with the default stub it renders an empty `svg` and the "not configured" warning. See [Using outside Metro](#using-outside-metro-webpack-vite-next).
@@ -276,14 +283,13 @@ Verified (details and commands in `docs/poc/2026-10-e2e-consumer.md`; the items 
 
 Not yet verified:
 
-- Android emulator or device rendering, HMR and release builds, with or without Expo (an earlier partial run is not counted), and real iOS devices
+- Real devices (iOS and Android), Expo on Android, Android ABIs other than arm64-v8a, an Android release build with the New Architecture off, and the iOS toggle tap
 - HMR in Expo Go and on the web, and Expo web's static `expo export` output served in a browser (only the dev server page was opened)
-- The HMR fix for the false "not found as a string literal" dev warning (unit-tested only; not re-run on a simulator)
 - A real CodePush deployment (only the OTA-equivalent bundle comparison above)
 - react-native-web in a browser with a real web bundler (webpack, Vite, Next)
 - Windows and macOS file-watching of directories created at runtime
 - Yarn Berry with the PnP linker, Bun running Metro on its own runtime (`bun --bun`), and installs from a published registry with any package manager
-- The native scanner on Windows and on Linux x64, and the cross-built release binaries in general (CI builds and tests them; it has not run yet). Installing it from the registry with pnpm or Yarn 1 (only local tarballs with npm were tested; see [Before publishing](#before-publishing))
+- Installing the native scanner from the registry with pnpm or Yarn 1 (only local tarballs with npm were tested; see [Before publishing](#before-publishing)). Benchmarks on platforms other than macOS arm64
 
 The peer ranges (`react-native >=0.72`, `react >=18`, `react-native-svg >=13`) were tested only with React Native 0.78.3 / React 19.0.0 / react-native-svg 15.13.0 (bare) and React Native 0.86.3 / React 19.2.3 / react-native-svg 15.15.4 (Expo SDK 57). Nothing below those versions was run.
 
