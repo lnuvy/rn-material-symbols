@@ -26,13 +26,15 @@ function tmpProject() {
 test('debounces bursts of source changes into one call', async () => {
   const root = tmpProject();
   const onChange = jest.fn();
-  const stop = startWatcher([root], onChange, 50);
+  // 300 ms, not 50: on a loaded macOS CI runner FSEvents delivered one synchronous burst in two batches more than
+  // 50 ms apart (ci run on 03107cd), so a 50 ms window measured FSEvents batching rather than our debounce
+  const stop = startWatcher([root], onChange, 300);
   // macOS FSEvents can deliver the fixture's own setup writes after the watch starts (seen as a second call under
   // load), so let the watcher settle and only count what the burst below causes
-  await wait(300);
+  await wait(500);
   onChange.mockClear();
   for (let i = 0; i < 3; i += 1) fs.writeFileSync(path.join(root, 'src', 'a.tsx'), `'info${i}'`);
-  await wait(400);
+  await wait(900);
   stop();
   expect(onChange).toHaveBeenCalledTimes(1);
 });
