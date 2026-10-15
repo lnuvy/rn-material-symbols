@@ -20,9 +20,6 @@ set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PMS="${PMS:-npm pnpm yarn}"
-RN_VERSION=0.78.3
-SVG_VERSION=15.13.0
-EXPECTED="info,home,check_box,check_box_outline_blank,expand_less,expand_more,settings,schedule,cloud_download"
 
 for tool in npm pnpm yarn node; do
   command -v "$tool" >/dev/null || { echo "error: '$tool' not found in PATH (consumer.sh needs npm, pnpm, yarn and node)" >&2; exit 1; }
@@ -35,19 +32,10 @@ cleanup() {
   if [ "${KEEP:-0}" = 1 ]; then echo "kept: $WORK"; else rm -rf "$WORK"; fi
 }
 trap cleanup EXIT
+# shellcheck source=e2e/app.sh
+. "$REPO/e2e/app.sh"
 
 echo "node $(node -v) · npm $(npm -v) · pnpm $(pnpm -v) · yarn $(cd "$WORK" && yarn -v) · $(date +%F)"
-
-# step <pm> <name> <cmd...>: run, log to $WORK/<pm>-<name>.log, record "pm|name|exit|seconds".
-step() {
-  local pm="$1" name="$2"; shift 2
-  local start=$SECONDS code=0
-  "$@" >"$WORK/$pm-$name.log" 2>&1 || code=$?
-  echo "$pm|$name|$code|$((SECONDS - start))" >> "$RESULTS"
-  echo "  [$pm] $name: exit $code ($((SECONDS - start))s)"
-  if [ "$code" != 0 ]; then tail -n 25 "$WORK/$pm-$name.log" | sed 's/^/      /'; fi
-  return 0
-}
 
 echo "== pack"
 cd "$REPO"
@@ -97,82 +85,7 @@ case " $PMS " in
     ;;
 esac
 
-echo "react-native CLI $(npx --yes @react-native-community/cli@latest --version 2>/dev/null | tail -n 1)"
-echo "== template (react-native $RN_VERSION)"
-npx --yes @react-native-community/cli@latest init E2eApp --version "$RN_VERSION" \
-  --skip-install --skip-git-init --directory "$WORK/template" >"$WORK/init.log" 2>&1 || { tail -30 "$WORK/init.log"; exit 1; }
-rm -rf "$WORK/template/__tests__"
-
-write_app() {
-  local dir="$1" pm="$2"
-  # README "Metro setup" plus the README "Dynamic names" safelist (include), default sources.
-  cat > "$dir/metro.config.js" <<'JS'
-const { getDefaultConfig } = require('@react-native/metro-config');
-const { withMaterialSymbols } = require('rn-material-symbols/metro');
-module.exports = withMaterialSymbols(getDefaultConfig(__dirname), { include: ['cloud_download'] });
-JS
-  mkdir -p "$dir/src" "$dir/__tests__"
-  cat > "$dir/src/tabs.ts" <<'TS'
-export const TABS = [{ key: 'settings', icon: 'settings' as const }];
-TS
-  cat > "$dir/App.tsx" <<'TSX'
-import React, { useState } from 'react';
-import { View } from 'react-native';
-import { MaterialIcon, type MaterialSymbolName } from 'rn-material-symbols';
-import { TABS } from './src/tabs';
-
-export default function App() {
-  const [checked] = useState(true);
-  const [open] = useState(false);
-  const toggle = `${open ? 'expand_less' : 'expand_more'}` as MaterialSymbolName;
-  return (
-    <View>
-      <MaterialIcon name="info" />
-      <MaterialIcon name="home" filled />
-      <MaterialIcon name={checked ? 'check_box' : 'check_box_outline_blank'} />
-      <MaterialIcon name={toggle} />
-      <MaterialIcon name={TABS[0].icon} />
-      <MaterialIcon name="access_time" />
-    </View>
-  );
-}
-TSX
-  cat > "$dir/jest.config.js" <<'JS'
-module.exports = {
-  preset: 'react-native',
-  moduleNameMapper: { ...require('rn-material-symbols/jest').moduleNameMapper },
-};
-JS
-  if [ "$pm" = pnpm ]; then
-    # README "Jest": pnpm keeps packages under node_modules/.pnpm, which the preset's default
-    # transformIgnorePatterns skips, so react-native's own jest setup fails to parse without this.
-    cat > "$dir/jest.config.js" <<'JS'
-module.exports = {
-  preset: 'react-native',
-  moduleNameMapper: { ...require('rn-material-symbols/jest').moduleNameMapper },
-  transformIgnorePatterns: ['node_modules/(?!(\\.pnpm|(jest-)?react-native|@react-native(-community)?)/)'],
-};
-JS
-  fi
-  cat > "$dir/__tests__/icon.test.tsx" <<'TSX'
-import React from 'react';
-import renderer, { act } from 'react-test-renderer';
-import { Path } from 'react-native-svg';
-import { MaterialIcon } from 'rn-material-symbols';
-
-const info = require('rn-material-symbols/icons/rounded/info');
-
-test('renders the info path', () => {
-  let tree!: renderer.ReactTestRenderer;
-  act(() => {
-    tree = renderer.create(<MaterialIcon name="info" />);
-  });
-  const paths = tree.root.findAllByType(Path);
-  expect(paths).toHaveLength(1);
-  expect(paths[0].props.d).toBe(info.d);
-});
-TSX
-}
+make_template
 
 run_pm() {
   local pm="$1" dir="$WORK/$1"
@@ -203,25 +116,11 @@ run_pm() {
       ;;
     *) echo "error: unknown package manager '$pm'" >&2; exit 1 ;;
   esac
-  step "$pm" bundle-ios npx react-native bundle --platform ios --dev false --entry-file index.js \
-    --bundle-output "$WORK/$pm-ios.jsbundle" --assets-dest "$WORK/$pm-ios-assets"
   case "$pm" in
-    # The report line is the last thing the scan prints; its final field names the engine that ran.
-    npm-native) step "$pm" engine grep -E '^\[rn-material-symbols\] .* · native$' "$WORK/$pm-bundle-ios.log" ;;
-    npm-js) step "$pm" engine grep -E '^\[rn-material-symbols\] .* · js$' "$WORK/$pm-bundle-ios.log" ;;
+    npm-native) check_app "$pm" native npm ;;
+    npm-js) check_app "$pm" js npm ;;
+    *) check_app "$pm" any "$pm" ;;
   esac
-  case "$pm" in
-    # A missing platform package is the expected case for npm-js: JS runs silently, no failure line.
-    npm-native|npm-js) step "$pm" no-native-warning bash -c '! grep -E "native scanner failed|warning: rn-material-symbols-scanner-native" "$1"' _ "$WORK/$pm-bundle-ios.log" ;;
-  esac
-  step "$pm" assert-ios node "$REPO/e2e/assert-bundle.mjs" "$WORK/$pm-ios.jsbundle" --expect "$EXPECTED"
-  step "$pm" bundle-android npx react-native bundle --platform android --dev false --entry-file index.js \
-    --bundle-output "$WORK/$pm-android.bundle" --assets-dest "$WORK/$pm-android-assets"
-  step "$pm" assert-android node "$REPO/e2e/assert-bundle.mjs" "$WORK/$pm-android.bundle" --expect "$EXPECTED"
-  step "$pm" jest "${pm%%-*}" test   # npm-native / npm-js run Jest through npm
-  grep -h "^\[rn-material-symbols\] " "$WORK/$pm-bundle-ios.log" 2>/dev/null | sed "s/^/  [$pm] /" || true
-  grep -h "exact icon set" "$WORK/$pm-assert-ios.log" "$WORK/$pm-assert-android.log" 2>/dev/null | sed "s/^/  [$pm] /" || true
-  grep -hE "^(Tests|Test Suites):" "$WORK/$pm-jest.log" 2>/dev/null | sed "s/^/  [$pm] /" || true
   cd "$REPO"
 }
 
@@ -237,9 +136,4 @@ for pm in $PMS; do
   run_pm "$pm"
 done
 
-echo "== summary (pm|step|exit|seconds)"
-cat "$RESULTS"
-if grep -qE '\|[1-9][0-9]*\|[0-9]+$' "$RESULTS"; then
-  echo "FAILED steps above"
-  exit 1
-fi
+summary

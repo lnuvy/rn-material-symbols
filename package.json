@@ -70,6 +70,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "e2e:consumer": "bash e2e/consumer.sh",
     "e2e:expo": "bash e2e/expo.sh",
+    "e2e:registry": "bash e2e/registry.sh",
     "e2e:linux": "bash e2e/linux.sh",
     "build:native": "pnpm --filter rn-material-symbols-scanner-native build",
     "test:native": "cargo test --manifest-path native/Cargo.toml"
