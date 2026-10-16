@@ -4,10 +4,10 @@ A maintainer runbook for releasing the eight packages. The short form is README
 [Before publishing](../README.md#before-publishing); this file has the exact commands, the checks
 between them, and what to do when a step fails.
 
-Status: written for 0.2.0, the first version to reach npm (0.1.0 was never published). Run so
-far: steps 2–4 (2026-10-11 and 2026-10-15; `e2e/registry.sh` ran the step 5 order and commands
-against a local Verdaccio), and the pre-release stop of step 6. Unverified: steps 0, 1, 5 and 7, and
-the install path of step 6, all of which need registry.npmjs.org.
+Status: 0.2.0, the first version on npm (0.1.0 was never published), was released with this
+runbook on 2026-10-16 through the CI-tarball route of step 5 and `scripts/publish-tarballs.sh`, and
+step 6 passed against registry.npmjs.org. The `pnpm publish` route of step 5 was run only against a
+local Verdaccio (`e2e/registry.sh`, 2026-10-11), never against npm.
 
 ## The eight packages
 
@@ -32,9 +32,17 @@ npm whoami                         # must print that account
 pnpm config get registry           # must print https://registry.npmjs.org/
 ```
 
-npm requires two-factor authentication to publish. Each `pnpm publish` asks for a one-time
-password, or pass it with `--otp=<code>` (codes expire in about 30 seconds, so get a fresh one per
-package). Eight publishes means eight codes.
+npm rejects publishing from an account without two-factor authentication: on 2026-10-15 every
+upload failed with `E403 … Two-factor authentication or granular access token with bypass 2fa
+enabled is required to publish packages` (nothing was published). Enable it once at
+`https://www.npmjs.com/settings/<user>/tfa` ("Authorization and writes"), then check:
+
+```bash
+npm profile get --json | node -p 'JSON.parse(require("fs").readFileSync(0)).tfa'   # not false
+```
+
+Each publish then asks for a one-time password (or opens the browser for a security key); a code
+expires in about 30 seconds, so use a fresh one per package. Eight publishes means eight codes.
 
 Check that every name is still free (each must print `E404`):
 
@@ -132,19 +140,20 @@ verified, with no local rebuild in between. `npm publish <file>.tgz` is safe her
 
 ```bash
 D=$(mktemp -d) && gh run download "$RUN" -n npm-tarballs -D "$D"
-node scripts/check-versions.mjs --packed "$D"
-for p in darwin-arm64 darwin-x64 linux-arm64-gnu linux-x64-gnu linux-x64-musl win32-x64-msvc; do
-  npm publish "$D/rn-material-symbols-scanner-native-$p-$V.tgz" --access public || break
-  npm view "rn-material-symbols-scanner-native-$p@$V" version
-done
-npm publish "$D/rn-material-symbols-scanner-native-$V.tgz" --access public
-npm publish "$D/rn-material-symbols-$V.tgz" --access public
+bash scripts/publish-tarballs.sh "$D"
 ```
 
-Same order, same `npm view` check after each. For 0.2.0 these tarballs (run 37218352303) were
-already downloaded to `~/personal/rnms-release-0.2.0/tarballs/`; their names match the commands
-above, `check-versions --packed` passes on them, and the darwin-arm64 binary inside has the same
-sha256 as the one assembled in step 2 (checked 2026-10-15). Unverified: `e2e/registry.sh`
+`scripts/publish-tarballs.sh` first checks the login, that 2FA is on, that all eight tarballs exist
+and that their versions agree (`check-versions --packed`). It then publishes in release order,
+waits until `npm view` shows each version, and stops at the first failure, so nothing later in the
+order is uploaded after a failed step. A package already on the registry at this version is skipped,
+so rerunning after a failure resumes where it stopped. Do not paste a hand-written loop instead: a
+`|| break` inside a loop does not stop the loader and library commands that follow it.
+
+For 0.2.0 these tarballs (run 37218352303) were already downloaded to
+`~/personal/rnms-release-0.2.0/tarballs/`; `check-versions --packed` passes on them and the
+darwin-arm64 binary inside has the same sha256 as the one assembled in step 2 (checked 2026-10-15).
+This is the route 0.2.0 was published with, by this script (see below). `e2e/registry.sh`
 rehearses the `pnpm publish` route above, not this one.
 
 ## 6. Verify from the real registry
@@ -160,7 +169,7 @@ on registry.npmjs.org and the loader names no `workspace:` version, then install
 `rn-material-symbols@<version>` by name with npm, pnpm, Yarn 1, Yarn Berry and Bun. The installed
 binary for this machine must be byte-identical to the one assembled in step 2. The temp npm config
 holds no token, so this run cannot publish. Before the release it stops at the first check with
-`FAILED steps above` (that path was run on 2026-10-15; the install path against npmjs has not been).
+`FAILED steps above` (run 2026-10-15); after the 0.2.0 release every step passed (2026-10-16).
 
 ## 7. Record the release
 
@@ -169,6 +178,20 @@ holds no token, so this run cannot publish. Before the release it stops at the f
   section.
 - README "Verification status": move "installs from the public npm registry" out of "Not yet
   verified" once step 6 passed.
+
+## What the 0.2.0 release ran into (2026-10-15/16)
+
+- Without 2FA every upload failed with `E403` (nothing was published). After enabling 2FA with a
+  passkey, npm printed `Authenticate your account at: https://www.npmjs.com/auth/cli/…` and
+  `Press ENTER to open in the browser...` for each package and waited for the approval.
+- Piping the run (`… | tee log`) made npm fail at once with `EOTP` and the URL instead of waiting;
+  `scripts/publish-tarballs.sh` now refuses to run without a TTY.
+- Every new package went through npm's staged publishing: a `0.0.0-stage` placeholder version
+  ("Temporary package placeholder for staged publishing") appeared first and the real version
+  later — 1 to 3 minutes for the platform packages and the loader, about 11 minutes for the
+  library (1.5 MB, 11,910 files). During that window `latest` of the library pointed at
+  `0.0.0-stage`. The placeholders stay listed in each package's versions.
+- The published shasums of all eight equal the CI tarballs (`npm view <pkg>@0.2.0 dist.shasum`).
 
 ## When something goes wrong
 
