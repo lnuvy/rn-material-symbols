@@ -279,6 +279,7 @@ Verified (details and commands in `docs/poc/2026-10-e2e-consumer.md`; the items 
 - Linux (`node:22` container, Linux 6.12): install, icon build, typecheck and the full test suite, including the Linux per-directory watcher branch.
 - Scanner benchmark on a 4,111-file monorepo-sized app (G3).
 - Native scanner (macOS arm64): the packed platform, loader and library tarballs installed with npm into a fresh bare React Native 0.78.3 app give a report line ending in `· native`, and without the platform tarball `· js` with no error or warning; both bundles hold the exact icon set and Jest passes (`PMS="npm-native npm-js" bash e2e/consumer.sh`). JS↔native parity on the test suite and on two 50,000-file corpora (`docs/poc/2026-10-native-g4.md`).
+- Published 0.2.0 from registry.npmjs.org (2026-10-16, macOS arm64, `PUBLISHED=1 bash e2e/registry.sh`): all eight packages are on the registry and their shasums equal the CI tarballs of run 37218352303. `rn-material-symbols@0.2.0` installed by name into a fresh bare React Native 0.78.3 app with npm 11.16, pnpm 10.19, Yarn 1.22.22, Yarn Berry 4.14.1 (`nodeLinker: node-modules`) and Bun 1.4.2: each installed the darwin-arm64 platform package with a binary byte-identical to the CI artifact, gave a report line ending in `· native`, the exact icon set in both bundles, and passing Jest. The other five platform packages were not installed.
 - Registry rehearsal (2026-10-11, macOS arm64, `bash e2e/registry.sh` against Verdaccio 6.10.4 on 127.0.0.1): the eight 0.2.0 packages, with the six binaries from CI run 37218352303, published in release order; `rn-material-symbols@0.2.0` installed by name with npm, pnpm 10.19, Yarn 1.22.22, Yarn Berry 4.14.1 (`nodeLinker: node-modules`) and Bun 1.4.2. Every one installed the darwin-arm64 platform package with a binary byte-identical to the CI artifact, gave a report line ending in `· native`, the exact icon set in both bundles, and passing Jest. Only darwin-arm64 was installed; the other five platform packages were published but not installed.
 - Native scanner on Linux arm64 (Docker on an arm64 Mac; `node:22` Debian glibc 2.36 and `node:22-alpine` musl): built from source in the container, the parity suite with `RNMS_REQUIRE_NATIVE=1` and `cargo test --release` pass against that binary. Linux arm64 musl is not a published target.
 
@@ -289,7 +290,7 @@ Not yet verified:
 - A real CodePush deployment (only the OTA-equivalent bundle comparison above)
 - react-native-web in a browser with a real web bundler (webpack, Vite, Next)
 - Windows and macOS file-watching of directories created at runtime
-- Yarn Berry with the PnP linker, Bun running Metro on its own runtime (`bun --bun`), and installs from the public npm registry (only the local Verdaccio rehearsal above)
+- Yarn Berry with the PnP linker, and Bun running Metro on its own runtime (`bun --bun`)
 - Installing the platform packages other than darwin-arm64 from a registry. Benchmarks on platforms other than macOS arm64
 
 The peer ranges (`react-native >=0.72`, `react >=18`, `react-native-svg >=13`) were tested only with React Native 0.78.3 / React 19.0.0 / react-native-svg 15.13.0 (bare) and React Native 0.86.3 / React 19.2.3 / react-native-svg 15.15.4 (Expo SDK 57). Nothing below those versions was run.
