@@ -2,8 +2,10 @@
 # Publish the eight tarballs CI packed (the `npm-tarballs` artifact) to registry.npmjs.org in release
 # order: six platform packages, the loader, the library (docs/PUBLISHING.md step 5). Stops at the
 # first failure, before anything later in the order is uploaded.
-#   bash scripts/publish-tarballs.sh <dir-with-tarballs> [version]
-#   version defaults to the root package.json version.
+#   bash scripts/publish-tarballs.sh <dir-with-tarballs>
+# The library publishes at the root package.json version and the seven native packages at native/package.json's,
+# which may be lower by patch (scripts/check-versions.mjs); for a library-only patch the native packages are already
+# on the registry and are skipped.
 #
 # Before uploading anything it checks: logged in (npm whoami), two-factor authentication enabled
 # (npm rejects publishing without it: E403 "Two-factor authentication or granular access token with
@@ -15,9 +17,11 @@
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DIR="${1:?usage: bash scripts/publish-tarballs.sh <dir-with-tarballs> [version]}"
+DIR="${1:?usage: bash scripts/publish-tarballs.sh <dir-with-tarballs>}"
 DIR="$(cd "$DIR" && pwd)"
-V="${2:-$(node -p "require('$REPO/package.json').version")}"
+LIB_V="$(node -p "require('$REPO/package.json').version")"
+NATIVE_V="$(node -p "require('$REPO/native/package.json').version")"
+ver() { if [ "$1" = rn-material-symbols ]; then echo "$LIB_V"; else echo "$NATIVE_V"; fi; }
 REG=https://registry.npmjs.org/
 NAMES="rn-material-symbols-scanner-native-darwin-arm64 rn-material-symbols-scanner-native-darwin-x64
 rn-material-symbols-scanner-native-linux-arm64-gnu rn-material-symbols-scanner-native-linux-x64-gnu
@@ -42,14 +46,15 @@ case "$TFA" in
   *) echo "error: two-factor authentication is '$TFA' for $USER_NAME; npm rejects publishing without it (E403). Enable it at https://www.npmjs.com/settings/$USER_NAME/tfa" >&2; exit 1 ;;
 esac
 for n in $NAMES; do
-  [ -f "$DIR/$n-$V.tgz" ] || { echo "error: missing $DIR/$n-$V.tgz" >&2; exit 1; }
+  [ -f "$DIR/$n-$(ver "$n").tgz" ] || { echo "error: missing $DIR/$n-$(ver "$n").tgz" >&2; exit 1; }
 done
 node "$REPO/scripts/check-versions.mjs" --packed "$DIR"
-echo "publishing $V as $USER_NAME (2FA: $TFA)"
+echo "publishing library $LIB_V, native $NATIVE_V as $USER_NAME (2FA: $TFA)"
 
-published() { npm view "$1@$V" version --registry "$REG" >/dev/null 2>&1; }
+published() { npm view "$1@$(ver "$1")" version --registry "$REG" >/dev/null 2>&1; }
 
 for n in $NAMES; do
+  V="$(ver "$n")"
   if published "$n"; then echo "== $n@$V already on the registry, skipped"; continue; fi
   echo "== $n@$V"
   npm publish "$DIR/$n-$V.tgz" --access public --registry "$REG"
@@ -65,4 +70,4 @@ for n in $NAMES; do
   done
   echo "   ok: $(npm view "$n@$V" version --registry "$REG")"
 done
-echo "all eight packages are on $REG at $V"
+echo "all eight packages are on $REG (library $LIB_V, native $NATIVE_V)"

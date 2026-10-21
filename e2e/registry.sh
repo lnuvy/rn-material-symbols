@@ -52,6 +52,8 @@ trap cleanup EXIT
 . "$REPO/e2e/app.sh"
 
 VERSION="$(node -p "require('$REPO/package.json').version")"
+# The native packages may be behind the library by patch (scripts/check-versions.mjs).
+NATIVE_VERSION="$(node -p "require('$REPO/native/package.json').version")"
 HOST="$(node -p 'process.platform + "-" + process.arch')"
 case "$HOST" in
   darwin-*) PLAT="$HOST" ;;
@@ -64,7 +66,7 @@ case "$HOST" in
 esac
 ASSEMBLED_SHA="$(shasum -a 256 "$REPO/native/npm/$PLAT/scanner.$PLAT.node" | cut -d' ' -f1)"
 echo "node $(node -v) · npm $(npm -v) · pnpm $(pnpm -v) · yarn $(cd "$WORK" && yarn -v) · registry $REG · $(date +%F)"
-echo "version $VERSION · host $PLAT · assembled scanner.$PLAT.node sha256 $ASSEMBLED_SHA"
+echo "library $VERSION · native $NATIVE_VERSION · host $PLAT · assembled scanner.$PLAT.node sha256 $ASSEMBLED_SHA"
 export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 
 if [ "$PUBLISHED" = 1 ]; then
@@ -73,11 +75,11 @@ if [ "$PUBLISHED" = 1 ]; then
   export NPM_CONFIG_USERCONFIG="$WORK/npmrc" npm_config_userconfig="$WORK/npmrc"
   echo "== released packages on $REG"
   for p in $PLATFORMS; do
-    step registry "view-rn-material-symbols-scanner-native-$p" npm view "rn-material-symbols-scanner-native-$p@$VERSION" version
+    step registry "view-rn-material-symbols-scanner-native-$p" npm view "rn-material-symbols-scanner-native-$p@$NATIVE_VERSION" version
   done
-  step registry view-rn-material-symbols-scanner-native npm view "rn-material-symbols-scanner-native@$VERSION" version
+  step registry view-rn-material-symbols-scanner-native npm view "rn-material-symbols-scanner-native@$NATIVE_VERSION" version
   step registry view-rn-material-symbols npm view "rn-material-symbols@$VERSION" version
-  step registry loader-deps bash -c 'deps="$(npm view "rn-material-symbols-scanner-native@$1" optionalDependencies --json)" && echo "$deps" && ! grep -F "workspace:" <<<"$deps"' _ "$VERSION"
+  step registry loader-deps bash -c 'deps="$(npm view "rn-material-symbols-scanner-native@$1" optionalDependencies --json)" && echo "$deps" && ! grep -F "workspace:" <<<"$deps"' _ "$NATIVE_VERSION"
   if grep -qE '^registry\|.*\|[1-9][0-9]*\|[0-9]+$' "$RESULTS"; then summary; fi
 else
 # --- default: Verdaccio rehearsal (left unindented for the heredoc) ---
@@ -128,16 +130,17 @@ export NPM_CONFIG_USERCONFIG="$WORK/npmrc" npm_config_userconfig="$WORK/npmrc"
 
 echo "== publish (release order: platforms, loader, library)"
 publish() {
-  local name="$1" dir="$2"
+  local name="$1" dir="$2" version
+  version="$(node -p "require('$dir/package.json').version")"
   step publish "$name" bash -c 'cd "$1" && pnpm publish --registry "$2" --no-git-checks' _ "$dir" "$REG"
-  step publish "view-$name" npm view "$name@$VERSION" version --registry "$REG"
+  step publish "view-$name" npm view "$name@$version" version --registry "$REG"
 }
 for p in $PLATFORMS; do publish "rn-material-symbols-scanner-native-$p" "$REPO/native/npm/$p"; done
 publish rn-material-symbols-scanner-native "$REPO/native"
 publish rn-material-symbols "$REPO"
 if grep -qE '^publish\|.*\|[1-9][0-9]*\|[0-9]+$' "$RESULTS"; then summary; fi
 # The published loader must name concrete versions, not workspace:*.
-step publish loader-deps bash -c 'deps="$(npm view "rn-material-symbols-scanner-native@$1" optionalDependencies --json --registry "$2")" && echo "$deps" && ! grep -F "workspace:" <<<"$deps"' _ "$VERSION" "$REG"
+step publish loader-deps bash -c 'deps="$(npm view "rn-material-symbols-scanner-native@$1" optionalDependencies --json --registry "$2")" && echo "$deps" && ! grep -F "workspace:" <<<"$deps"' _ "$NATIVE_VERSION" "$REG"
 fi # --- end Verdaccio rehearsal ---
 
 make_template

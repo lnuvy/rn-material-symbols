@@ -53,6 +53,15 @@ for n in rn-material-symbols rn-material-symbols-scanner-native \
 done
 ```
 
+## Library-only patch releases
+
+When only the library's JS changed (no Rust, no loader change), bump just the root `package.json` patch
+(for example 0.2.0 → 0.2.1) and leave `native/` alone. `scripts/check-versions.mjs` accepts a library
+version ahead of the native packages by patch (same major.minor); `pnpm pack` writes the native version
+(`"rn-material-symbols-scanner-native": "0.2.0"`) into the library's `optionalDependencies`. Run the same
+steps below: the publish script skips the seven native packages already on the registry and uploads only
+the library. Any change under `native/` needs a full release with all eight at the new version.
+
 ## 1. Freeze the commit
 
 ```bash

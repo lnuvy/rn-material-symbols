@@ -124,12 +124,12 @@ run_pm() {
   cd "$REPO"
 }
 
-VERSION="$(node -p "require('$REPO/package.json').version")"
+NATIVE_VERSION="$(node -p "require('$REPO/native/package.json').version")"
 for pm in $PMS; do
   # Yarn 1 aborts when an optional dependency is missing from the registry, so before the native
   # loader of this version is published it cannot install the library at all. Skip, loudly.
-  if [ "$pm" = yarn ] && ! npm view "rn-material-symbols-scanner-native@$VERSION" version >/dev/null 2>&1; then
-    echo "== yarn: SKIPPED (rn-material-symbols-scanner-native@$VERSION is not on the registry yet; Yarn 1 fails on a missing optional dependency)"
+  if [ "$pm" = yarn ] && ! npm view "rn-material-symbols-scanner-native@$NATIVE_VERSION" version >/dev/null 2>&1; then
+    echo "== yarn: SKIPPED (rn-material-symbols-scanner-native@$NATIVE_VERSION is not on the registry yet; Yarn 1 fails on a missing optional dependency)"
     echo "yarn|skipped-unpublished-native|0|0" >> "$RESULTS"
     continue
   fi

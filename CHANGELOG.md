@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.1 — unreleased
+
+Library only; the native scanner packages stay at 0.2.0.
+
+- `MaterialIcon` never throws on a bad lookup. A malformed registry, a non-string `name` or `variant`, or a key such as `constructor` renders an empty icon instead of an error.
+- Release builds now log a missing icon once per name with `console.error` (`[rn-material-symbols] …`). Before, a miss was silent outside development. Development keeps the delayed `console.warn`.
+- Reporting a missing icon never throws, even when `console` itself throws.
+- Versioning: the library may now be ahead of the native scanner packages by patch (same major.minor), so a JS-only fix ships as one package. `scripts/check-versions.mjs`, `scripts/publish-tarballs.sh` and the e2e scripts follow this rule.
+
 ## 0.2.0 — 2026-10-16
 
 - Optional native (Rust) source scanner, `rn-material-symbols-scanner-native`, installed through `optionalDependencies` with one prebuilt binary package per platform (macOS arm64/x64, Linux x64 glibc/musl, Linux arm64 glibc, Windows x64). About 3–4x faster than the JS scanner on a 49,332-file source tree (cold 1.55 s vs 5.73 s, warm 0.48 s vs 1.44 s, macOS arm64). It finds every name the JS scanner finds in value positions; the JS scanner stays the reference, and the known differences (all in type positions or extra names) are listed in the README.
