@@ -66,7 +66,7 @@ import { MaterialIcon } from 'rn-material-symbols';
 
 Any other `SvgProps` are passed to the underlying `Svg`. Under the hood it renders `<Svg viewBox="0 -960 960 960">` with one `<Path>`.
 
-If an icon is missing from the registry, the component does not crash. It renders an empty `Svg` of the same size and, in development, warns once per icon with a hint (see [Troubleshooting](#troubleshooting)). The warning comes about 2 s after the first render and only if the icon is still missing then: during HMR, the file you saved can render once before the regenerated registry arrives.
+If an icon is missing from the registry, the component does not crash. It renders an empty `Svg` of the same size and reports the miss once per icon with a hint (see [Troubleshooting](#troubleshooting)). In development that is a `console.warn` about 2 s after the first render, only if the icon is still missing then: during HMR, the file you saved can render once before the regenerated registry arrives. Release builds log `console.error` right away, so crash and monitoring tools that collect console errors see it. A malformed registry, a `name` or `variant` that is not a string, or an object key such as `constructor` also renders the empty icon; the lookup and the report never throw (since 0.2.1).
 
 ## Options
 
@@ -168,7 +168,7 @@ The registry is built by the Metro plugin. Without Metro, `rn-material-symbols/r
 
 ## Troubleshooting
 
-**An icon renders as blank space.** The dev warning says why:
+**An icon renders as blank space.** The warning (development) or `console.error` (release) says why:
 
 - `withMaterialSymbols is not configured` — wrap your Metro config as shown above, then restart Metro with `--reset-cache`.
 - `variant 'x' is not bundled` — add it to `variants`.

@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { render } from '@testing-library/react-native';
 import * as React from 'react';
-import { MaterialIcon, MISSING_ICON_WARN_DELAY_MS } from './MaterialIcon';
+import { MaterialIcon, MISSING_ICON_WARN_DELAY_MS, resolveIcon } from './MaterialIcon';
 
 const fixture = require('rn-material-symbols/registry');
 
@@ -104,6 +104,67 @@ describe('MaterialIcon', () => {
         expect(console.warn).not.toHaveBeenCalled();
       } finally {
         mod!.exports = original;
+      }
+    });
+  });
+
+  describe('never throws (worst case: an empty icon and a console message)', () => {
+    const odd: unknown[] = [undefined, null, 123, {}, [], 'constructor', '__proto__', 'toString', 'hasOwnProperty', 'valueOf', ''];
+
+    test('resolveIcon returns undefined for malformed registries and odd names or variants', () => {
+      const regs: unknown[] = [undefined, null, {}, { icons: {} }, { aliases: {} }, { icons: null, aliases: null }, 'x', { icons: { rounded: { home: 'not-an-object' } }, aliases: {} }];
+      for (const reg of regs) expect(() => resolveIcon(reg as never, 'rounded', 'home')).not.toThrow();
+      for (const reg of regs) expect(resolveIcon(reg as never, 'rounded', 'home')).toBeUndefined();
+      for (const name of odd) expect(resolveIcon(fixture, 'rounded', name as never)).toBeUndefined();
+      for (const variant of odd) expect(resolveIcon(fixture, variant as never, 'info')).toBeUndefined();
+      // an alias entry that is not a string is ignored rather than used as a key
+      expect(resolveIcon({ ...fixture, aliases: { info: 42 } } as never, 'rounded', 'info')?.d).toBe('INFO0');
+    });
+
+    test('odd names and variants render an empty Svg without throwing', () => {
+      jest.useFakeTimers();
+      try {
+        for (const value of odd) {
+          expect(() => render(<MaterialIcon name={value as never} />)).not.toThrow();
+          expect(() => render(<MaterialIcon name="info" variant={value as never} />)).not.toThrow();
+          expect(render(<MaterialIcon name={value as never} />).UNSAFE_root.findAllByType('Path' as never)).toHaveLength(0);
+        }
+        expect(() => jest.runAllTimers()).not.toThrow();
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    test('a throwing console does not break rendering', () => {
+      jest.useFakeTimers();
+      (console.warn as jest.Mock).mockImplementation(() => {
+        throw new Error('console broke');
+      });
+      try {
+        expect(() => render(<MaterialIcon name={'console_throws' as never} />)).not.toThrow();
+        expect(() => jest.runAllTimers()).not.toThrow();
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    test('release builds log console.error once per name, immediately', () => {
+      const g = globalThis as { __DEV__?: boolean };
+      const dev = g.__DEV__;
+      const error = jest.spyOn(console, 'error').mockImplementation(() => {});
+      g.__DEV__ = false;
+      try {
+        render(
+          <>
+            <MaterialIcon name={'release_miss' as never} />
+            <MaterialIcon name={'release_miss' as never} />
+          </>,
+        );
+        expect(error).toHaveBeenCalledTimes(1);
+        expect(error.mock.calls[0][0]).toContain("[rn-material-symbols] 'release_miss' (rounded)");
+        expect(console.warn).not.toHaveBeenCalled();
+      } finally {
+        g.__DEV__ = dev;
       }
     });
   });

@@ -34,9 +34,51 @@ function warnIfStillMissing(variant: MaterialSymbolVariant, name: string, key: s
   console.warn(`[rn-material-symbols] ${missingIconMessage(reg, variant, name)}`);
 }
 
+const hasOwn = Object.prototype.hasOwnProperty;
+
+/**
+ * Never throws: a malformed registry, a non-string name or variant, or a key such as `constructor` resolves to
+ * `undefined`, which renders an empty icon. Icon lookups are not own-property checks because the Jest registry's
+ * variants are lazy Proxies; the result's shape is checked instead.
+ */
 export function resolveIcon(reg: Registry, variant: MaterialSymbolVariant, name: string): IconData | undefined {
-  const target = reg.aliases[name] ?? name;
-  return reg.icons[variant]?.[target];
+  try {
+    if (typeof name !== 'string' || typeof variant !== 'string' || !reg || typeof reg !== 'object') return undefined;
+    const { aliases, icons } = reg;
+    const alias = aliases && hasOwn.call(aliases, name) ? aliases[name] : undefined;
+    const target = typeof alias === 'string' ? alias : name;
+    const byVariant = icons && hasOwn.call(icons, variant) ? icons[variant] : undefined;
+    const icon = byVariant ? byVariant[target as keyof typeof byVariant] : undefined;
+    return icon && typeof icon === 'object' && typeof icon.d === 'string' ? icon : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * A missing icon renders empty and is reported once per variant:name; reporting itself never throws.
+ * Dev waits for a possible HMR registry update and warns. Release builds have no HMR, so they log console.error at once
+ * (crash and RUM tools that collect console errors then see the miss).
+ */
+function reportMissing(variant: MaterialSymbolVariant, name: string): void {
+  try {
+    const key = `${String(variant)}:${String(name)}`;
+    if (warned.has(key)) return;
+    warned.add(key);
+    if (__DEV__) {
+      setTimeout(() => {
+        try {
+          warnIfStillMissing(variant, name, key);
+        } catch {
+          // reporting must never take the app down
+        }
+      }, MISSING_ICON_WARN_DELAY_MS);
+    } else {
+      console.error(`[rn-material-symbols] ${missingIconMessage(registry, variant, name)}`);
+    }
+  } catch {
+    // reporting must never take the app down
+  }
 }
 
 export function MaterialIcon({
@@ -53,11 +95,7 @@ export function MaterialIcon({
   const mergedStyle = rotate ? [{ transform: [{ rotate: `${rotate}deg` }] }, style] : style;
 
   if (!icon) {
-    const key = `${variant}:${name}`;
-    if (__DEV__ && !warned.has(key)) {
-      warned.add(key);
-      setTimeout(() => warnIfStillMissing(variant, name, key), MISSING_ICON_WARN_DELAY_MS);
-    }
+    reportMissing(variant, name);
     return <Svg {...svgProps} width={size} height={size} viewBox={VIEW_BOX} style={mergedStyle} />;
   }
 
