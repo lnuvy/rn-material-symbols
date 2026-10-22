@@ -1,13 +1,17 @@
 # Changelog
 
-## 0.2.1 — unreleased
+## 0.3.0 — unreleased
 
-Library only; the native scanner packages stay at 0.2.0.
+All eight packages; the native scanner changed (it reports marker strings per file). Includes the unreleased 0.2.1 fixes.
 
-- `MaterialIcon` never throws on a bad lookup. A malformed registry, a non-string `name` or `variant`, or a key such as `constructor` renders an empty icon instead of an error.
-- Release builds now log a missing icon once per name with `console.error` (`[rn-material-symbols] …`). Before, a miss was silent outside development. Development keeps the delayed `console.warn`.
-- Reporting a missing icon never throws, even when `console` itself throws.
-- Versioning: the library may now be ahead of the native scanner packages by patch (same major.minor), so a JS-only fix ships as one package. `scripts/check-versions.mjs`, `scripts/publish-tarballs.sh` and the e2e scripts follow this rule.
+- **Only what you render is bundled.** The new default `collect: 'usage'` traces `MaterialIcon` uses (literals, conditionals, `const` and object/array maps across files, import aliases, namespace imports, barrels, `createElement`, and wrapper components that pass their props on) instead of collecting every icon-shaped string. Strings like `returnKeyType: 'search'` are no longer icons. A use that cannot be traced bundles the icon names written in that file and the files it imports, and prints the file and line. `collect: 'literals'` keeps the 0.2 behavior.
+- **Only the shapes you render are bundled.** Each icon ships its unfilled path, its filled path, or both, following `filled`. Rendering a shape that was not bundled shows a blank icon and reports it like a missing icon.
+- **Smaller paths.** Coordinates are snapped to the integer grid of the 960-unit box (largest point shift 2 units, 0.05 px at 24 px): about 14% fewer characters and 22% less after gzip over all rounded paths.
+- **One module.** The generated registry inlines the paths it uses (no module per icon). Variants written in source (`variant="outlined"`) are bundled automatically.
+- **Package layout (breaking).** Icon data is one file per variant, `icons/<variant>.json`, instead of 11,874 modules; the `rn-material-symbols/icons/*` export is removed. Package files: 11,910 → 12 (approximately; see `npm pack`).
+- `MaterialIcon` never throws on a bad lookup (malformed registry, non-string `name`/`variant`, keys like `constructor`); release builds log misses with `console.error`; reporting never throws.
+- Native scanner: per-file markers; cache revision 2 (old caches are discarded).
+- Versioning: the library may be ahead of the native packages by patch (`scripts/check-versions.mjs`), for later JS-only fixes.
 
 ## 0.2.0 — 2026-10-16
 

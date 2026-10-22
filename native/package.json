@@ -1,6 +1,6 @@
 {
   "name": "rn-material-symbols-scanner-native",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Optional native (Rust) source scanner for rn-material-symbols: finds the Material Symbols names used in React Native source. Installed automatically as an optional dependency; not meant to be used directly.",
   "keywords": [
     "rn-material-symbols",
