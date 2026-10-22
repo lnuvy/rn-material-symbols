@@ -94,7 +94,7 @@ d('native scan matches JS scan', () => {
     const none = both([]);
     expect(withDefault.files).toBe(2000 + Object.keys(FLOW_FILES).length + Object.keys(MARKER_FILES).length);
     // markers were exercised: both engines report the same files, markers in the order asked
-    expect(Object.fromEntries([...withDefault.marked].filter(([f]) => f.includes(`${path.sep}marker${path.sep}`)).map(([f, m]) => [path.relative(dir, f), m]))).toEqual({
+    expect(Object.fromEntries([...withDefault.marked].filter(([f]) => f.includes(`${path.sep}marker${path.sep}`)).map(([f, m]) => [path.relative(dir, f).split(path.sep).join('/'), m]))).toEqual({
       'src/marker/Plain.ts': ['rn-material-symbols'],
       'src/marker/Uses.tsx': ['rn-material-symbols', 'AppIcon'],
       'src/marker/Wrapper.tsx': ['AppIcon'],
