@@ -7,4 +7,5 @@ export type {
   MaterialSymbolName,
   MaterialSymbolVariant,
   Registry,
+  RegistryIcon,
 } from './types';

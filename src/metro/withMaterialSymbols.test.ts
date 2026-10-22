@@ -34,14 +34,15 @@ function project(files: Record<string, string>) {
   return root;
 }
 
-const quiet = { watch: false, log: () => {} };
+// the 0.2 collection (every icon-shaped string): these tests cover scanning, excludes, caching and logging
+const quiet = { watch: false, log: () => {}, collect: 'literals' as const };
 
 test('writes a registry with only the scanned icons and resolves the virtual module to it', () => {
   const root = project({ 'src/App.tsx': "<MaterialIcon name='info' />; const x = 'access_time';" });
   const config = withMaterialSymbols({ projectRoot: root, resolver: {} }, quiet);
   const registryFile = path.join(root, 'node_modules', '.cache', 'rn-material-symbols', 'registry.js');
   const code = fs.readFileSync(registryFile, 'utf8');
-  expect(code).toContain('"info": require(');
+  expect(code).toContain('"info":{d:');
   expect(code).toContain('"access_time":');
   expect(code).not.toContain('"home"');
   const resolved = config.resolver!.resolveRequest!({ resolveRequest: () => 'default' } as never, 'rn-material-symbols/registry', 'ios');
@@ -80,8 +81,8 @@ test('include safelist adds icons, unknown names throw with a list', () => {
 test('reports one line, and warns with top files above warnAboveIcons', () => {
   const root = project({ 'types-like.ts': "export const ALL = ['info','home','close','check'];" });
   const lines: string[] = [];
-  withMaterialSymbols({ projectRoot: root }, { watch: false, warnAboveIcons: 3, log: (l) => lines.push(l) });
-  expect(lines[0]).toMatch(/^\[rn-material-symbols\] rounded 4 icons · [\d.]+ KB · aliases 0 · safelist 0 · 1 files \(\d+ms\) · (?:js|native)$/);
+  withMaterialSymbols({ projectRoot: root }, { watch: false, warnAboveIcons: 3, log: (l) => lines.push(l), collect: 'literals' });
+  expect(lines[0]).toMatch(/^\[rn-material-symbols\] rounded 4 icons \(4 unfilled · 4 filled\) · [\d.]+ KB · aliases 0 · safelist 0 · literals · 1 files \(\d+ms\) · (?:js|native)$/);
   expect(lines[1]).toContain('more than 3 icons');
   expect(lines[2]).toContain('types-like.ts (4)');
 });
@@ -162,7 +163,7 @@ describe('default excludes', () => {
 });
 
 describe('watch wiring', () => {
-  const watching = (log: (line: string) => void) => ({ watch: true, log });
+  const watching = (log: (line: string) => void) => ({ watch: true, log, collect: 'literals' as const });
 
   test('a second evaluation stops the first watcher before starting a new one', () => {
     const root = project({ 'a.ts': "'info'" });
@@ -235,7 +236,7 @@ test('reports the scanner engine and honours RN_MATERIAL_SYMBOLS_SCANNER', () =>
   const prev = process.env.RN_MATERIAL_SYMBOLS_SCANNER;
   process.env.RN_MATERIAL_SYMBOLS_SCANNER = 'js';
   try {
-    withMaterialSymbols({ projectRoot: root }, { watch: false, scanner: 'native', log: (l) => lines.push(l) });
+    withMaterialSymbols({ projectRoot: root }, { watch: false, scanner: 'native', log: (l) => lines.push(l), collect: 'literals' });
   } finally {
     if (prev === undefined) delete process.env.RN_MATERIAL_SYMBOLS_SCANNER;
     else process.env.RN_MATERIAL_SYMBOLS_SCANNER = prev;
@@ -253,6 +254,7 @@ function generateTwice(root: string, lines: string[], extra: Record<string, unkn
   let rescan: () => void = () => {};
   withMaterialSymbols({ projectRoot: root }, {
     watch: true,
+    collect: 'literals',
     log: (l) => lines.push(l),
     startWatcher: (_roots, onChange) => {
       rescan = onChange;
@@ -277,7 +279,7 @@ test('native path: report line ends with · native and shows the wall time aroun
   };
   loadNativeMock.mockReturnValue(nativeBinding(SAME_MINOR_VERSION, slowScan));
   const lines: string[] = [];
-  withMaterialSymbols({ projectRoot: project({ 'a.ts': "'info'" }) }, { watch: false, scanner: 'native', log: (l) => lines.push(l) });
+  withMaterialSymbols({ projectRoot: project({ 'a.ts': "'info'" }) }, { watch: false, scanner: 'native', log: (l) => lines.push(l), collect: 'literals' });
   const ms = / \((\d+)ms\) · native$/.exec(lines[0]);
   expect(ms).not.toBeNull();
   expect(Number(ms![1])).toBeGreaterThanOrEqual(35);
@@ -308,6 +310,7 @@ test('the regex-fallback line is logged once per distinct set of unparsed files,
   let rescan: () => void = () => {};
   withMaterialSymbols({ projectRoot: root }, {
     watch: true,
+    collect: 'literals',
     log: (l) => lines.push(l),
     startWatcher: (_roots, onChange) => {
       rescan = onChange;

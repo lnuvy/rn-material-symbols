@@ -26,9 +26,20 @@ describe('MaterialIcon', () => {
     expect(pathOf(<MaterialIcon name="info" />).props).toMatchObject({ d: 'INFO0', fill: 'black' });
   });
 
-  test('filled uses f, and falls back to d when f is absent', () => {
-    expect(pathOf(<MaterialIcon name="info" filled />).props.d).toBe('INFO1');
-    expect(pathOf(<MaterialIcon name="check" filled />).props.d).toBe('CHECK0');
+  test('filled uses f; an icon bundled without the requested shape renders empty and reports it', () => {
+    jest.useFakeTimers();
+    try {
+      expect(pathOf(<MaterialIcon name="info" filled />).props.d).toBe('INFO1');
+      // the fixture has `check` in its unfilled shape only, as the generated registry does for unfilled-only uses
+      const view = render(<MaterialIcon name="check" filled />);
+      expect(view.UNSAFE_root.findAllByType('Path' as never)).toHaveLength(0);
+      jest.advanceTimersByTime(MISSING_ICON_WARN_DELAY_MS);
+      expect((console.warn as jest.Mock).mock.calls[0][0]).toContain("'check' (rounded) is bundled without its filled shape");
+      // the unfilled shape still renders
+      expect(pathOf(<MaterialIcon name="check" />).props.d).toBe('CHECK0');
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   test('size and color', () => {

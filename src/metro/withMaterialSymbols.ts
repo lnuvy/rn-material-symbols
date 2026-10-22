@@ -2,9 +2,11 @@ import path from 'node:path';
 import { MATERIAL_SYMBOL_VARIANTS, REGISTRY_MODULE } from '../constants';
 import { MATERIAL_SYMBOL_ALIASES, MATERIAL_SYMBOL_LEGACY, MATERIAL_SYMBOL_NAMES } from '../generated/names';
 import type { MaterialSymbolAlias, MaterialSymbolName, MaterialSymbolVariant } from '../types';
-import { renderRegistry, writeIfChanged } from './renderRegistry';
+import { type IconUses, renderRegistry, type Shape, variantLoader, writeIfChanged } from './renderRegistry';
 import type { ScannerMode } from './nativeScanner';
 import { scanProject, topFiles } from './scanProject';
+import { analyzeUsage, LIBRARY, type UsageResult } from './usage';
+import { fileSummaryCache } from './usageCache';
 
 export type { ScannerMode } from './nativeScanner';
 
@@ -40,6 +42,13 @@ export interface WithMaterialSymbolsOptions {
   cacheDir?: string;
   /** 'auto' (default) uses the native scanner when installed, else JS. Overridden by RN_MATERIAL_SYMBOLS_SCANNER. */
   scanner?: ScannerMode;
+  /**
+   * 'usage' (default): bundle the names, variants and filled/unfilled shapes that MaterialIcon (and components that
+   * wrap it) actually render, traced through constants, maps, imports and props. A use that cannot be traced includes
+   * the icon names written in that file and the files it imports, and is reported.
+   * 'literals': every icon-shaped string in your sources, in both shapes (the 0.2 behavior).
+   */
+  collect?: 'usage' | 'literals';
   log?: (line: string) => void;
   /** injected for tests; defaults to ./watch startWatcher */
   startWatcher?: (roots: string[], onChange: () => void, debounceMs?: number, onError?: (error: Error) => void) => () => void;
@@ -47,6 +56,7 @@ export interface WithMaterialSymbolsOptions {
 
 const PACKAGE_ROOT = path.resolve(__dirname, '..', '..');
 const ICONS_DIR = path.join(PACKAGE_ROOT, 'icons');
+const loadVariant = variantLoader(ICONS_DIR);
 const NAME_SET: ReadonlySet<string> = new Set<string>([
   ...MATERIAL_SYMBOL_NAMES,
   ...Object.keys(MATERIAL_SYMBOL_ALIASES),
@@ -55,6 +65,7 @@ const NAME_SET: ReadonlySet<string> = new Set<string>([
 const ALIASES: Record<string, string> = { ...MATERIAL_SYMBOL_ALIASES };
 const PACKAGE_VERSION: string = require(path.join(PACKAGE_ROOT, 'package.json')).version;
 const CACHE_KEY = `${PACKAGE_VERSION}:${NAME_SET.size}`;
+const COLLECT_MODES = ['usage', 'literals'] as const;
 const SCANNER_MODES: readonly ScannerMode[] = ['auto', 'js', 'native'];
 // Each distinct message is logged once per process; native is still retried on every rescan.
 const warnedOnce = new Set<string>();
@@ -106,10 +117,20 @@ export function withMaterialSymbols<T extends MetroConfigLike>(config: T, option
     throw new Error(`[rn-material-symbols] unknown scanner: ${String(options.scanner)} (expected js|native|auto)`);
   }
   const scanner: ScannerMode = (envScanner as ScannerMode | undefined) || (options.scanner ?? 'auto');
+  // Each distinct message is logged once per process.
+  const once = (line: string) => {
+    if (warnedOnce.has(line)) return;
+    warnedOnce.add(line);
+    log(line);
+  };
+
+  const collect = options.collect ?? 'usage';
+  if (!COLLECT_MODES.includes(collect)) throw new Error(`[rn-material-symbols] unknown collect: ${String(collect)} (expected usage|literals)`);
+  const summaryCache = fileSummaryCache(path.join(cacheDir, 'usage-cache.json'), PACKAGE_VERSION);
 
   const generate = () => {
-    // wall time around scanProject, the same for both engines (the native one also pays napi marshalling and the JS
-    // re-extraction of files it could not parse)
+    // wall time around scanProject and the usage analysis, the same for both engines (the native one also pays napi
+    // marshalling and the JS re-extraction of files it could not parse)
     const started = performance.now();
     const scan = scanProject({
       sources,
@@ -119,21 +140,62 @@ export function withMaterialSymbols<T extends MetroConfigLike>(config: T, option
       cacheKey: CACHE_KEY,
       scanner,
       expectedNativeVersion: PACKAGE_VERSION,
+      ...(collect === 'usage' ? { markers: [LIBRARY] } : {}),
     });
-    const scanMs = performance.now() - started;
-    const names = new Set<string>([...scan.names, ...include]);
-    const out = renderRegistry({ variants, names, aliases: ALIASES, iconsDir: ICONS_DIR });
-    const changed = writeIfChanged(registryFile, out.code);
-    const perVariant = variants.map((v) => `${v} ${out.count[v] ?? 0} icons`).join(' · ');
-    log(`[rn-material-symbols] ${perVariant} · ${(out.bytes / 1024).toFixed(1)} KB · aliases ${out.aliasesUsed} · safelist ${include.length} · ${scan.files} files (${Math.round(scanMs)}ms) · ${scan.engine}`);
-    const once = (line: string) => {
-      if (warnedOnce.has(line)) return;
-      warnedOnce.add(line);
-      log(line);
+
+    const uses: IconUses = new Map();
+    const usedAliases: Record<string, string> = {};
+    const add = (variant: MaterialSymbolVariant, name: string, shapes: Iterable<Shape>) => {
+      const target = ALIASES[name] ?? name;
+      if (target !== name) usedAliases[name] = target;
+      const byName = uses.get(variant) ?? new Map<string, Set<Shape>>();
+      const set = byName.get(target) ?? new Set<Shape>();
+      for (const sh of shapes) set.add(sh);
+      byName.set(target, set);
+      uses.set(variant, byName);
     };
+    let usage: UsageResult | undefined;
+    if (collect === 'usage') {
+      usage = analyzeUsage({
+        markedFiles: [...scan.marked.keys()],
+        byFile: scan.byFile,
+        nameSet: NAME_SET,
+        cache: summaryCache,
+        findFilesContaining: (tokens) => {
+          // the same engine, looking only for the tokens (no icon names: nothing is parsed)
+          const found = scanProject({
+            sources,
+            nameSet: new Set(),
+            exclude,
+            cacheFile: path.join(cacheDir, 'scan-cache.tokens.json'),
+            cacheKey: CACHE_KEY,
+            scanner,
+            markers: tokens,
+          });
+          return [...found.marked.keys()];
+        },
+      });
+      for (const [variant, byName] of usage.uses) {
+        const targets: MaterialSymbolVariant[] = variant === '*' ? variants : MATERIAL_SYMBOL_VARIANTS.includes(variant as MaterialSymbolVariant) ? [variant as MaterialSymbolVariant] : [];
+        if (targets.length === 0) once(`[rn-material-symbols] warning: unknown variant '${variant}' in your sources is ignored`);
+        for (const v of targets) for (const [name, shapes] of byName) add(v, name, shapes);
+      }
+    } else {
+      for (const name of scan.names) for (const v of variants) add(v, name, ['d', 'f']);
+    }
+    for (const name of include) for (const v of variants) add(v, name, ['d', 'f']);
+    const scanMs = performance.now() - started;
+
+    const out = renderRegistry({ uses, aliases: usedAliases, loadVariant });
+    const changed = writeIfChanged(registryFile, out.code);
+    const perVariant = [...uses.keys()].sort().map((v) => `${v} ${out.count[v] ?? 0} icons`).join(' · ') || `${variants[0]} 0 icons`;
+    const shapeNote = `${out.shapes.d} unfilled · ${out.shapes.f + out.shapes.shared} filled`;
+    const usageNote = usage ? ` · ${usage.sites} uses${usage.fallbackFiles.length > 0 ? ` · ${usage.fallbackFiles.length} files included conservatively` : ''}` : ' · literals';
+    log(`[rn-material-symbols] ${perVariant} (${shapeNote}) · ${(out.bytes / 1024).toFixed(1)} KB · aliases ${out.aliasesUsed} · safelist ${include.length}${usageNote} · ${scan.files} files (${Math.round(scanMs)}ms) · ${scan.engine}`);
     if (scan.fallbackReason) once(`[rn-material-symbols] native scanner failed, used JS: ${scan.fallbackReason}`);
     if (scan.nativeVersionWarning) once(`[rn-material-symbols] warning: ${scan.nativeVersionWarning}`);
-    const maxCount = Math.max(...variants.map((v) => out.count[v] ?? 0));
+    for (const d of usage?.diagnostics ?? []) once(`[rn-material-symbols] ${path.relative(projectRoot, d.file)}:${d.line}: ${d.message}`);
+    const maxCount = Math.max(0, ...Object.values(out.count).map((n) => n ?? 0));
     if (maxCount > warnAboveIcons) {
       log(`[rn-material-symbols] warning: more than ${warnAboveIcons} icons. A type union or a list of icon names may have been scanned. Top files:`);
       for (const { file, count } of topFiles(scan.byFile, 5)) log(`  ${path.relative(projectRoot, file)} (${count})`);
@@ -148,6 +210,7 @@ export function withMaterialSymbols<T extends MetroConfigLike>(config: T, option
         log(`[rn-material-symbols] ${scan.unparsed.length} files fell back to regex scanning (syntax errors?)`);
       }
     }
+    summaryCache.save();
     return changed;
   };
 

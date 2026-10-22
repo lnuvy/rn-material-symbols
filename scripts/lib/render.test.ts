@@ -1,4 +1,4 @@
-import { formatDataJson, renderIconModule, renderNamesModule } from './render';
+import { formatDataJson, renderNamesModule, renderVariantData } from './render';
 
 test('formatDataJson sorts keys and writes one icon per line', () => {
   expect(formatDataJson({ info: { d: 'I', f: 'IF' }, close: { d: 'C' } })).toBe(
@@ -6,9 +6,8 @@ test('formatDataJson sorts keys and writes one icon per line', () => {
   );
 });
 
-test('renderIconModule emits a one-line CommonJS module and omits f when absent', () => {
-  expect(renderIconModule({ d: 'M0 0Z' })).toBe('module.exports={"d":"M0 0Z"};\n');
-  expect(renderIconModule({ d: 'A', f: 'B' })).toBe('module.exports={"d":"A","f":"B"};\n');
+test('renderVariantData writes sorted compact JSON', () => {
+  expect(renderVariantData({ info: { d: 'I', f: 'IF' }, close: { d: 'C' } })).toBe('{"close":{"d":"C"},"info":{"d":"I","f":"IF"}}\n');
 });
 
 test('renderNamesModule emits literal tuples and alias types', () => {

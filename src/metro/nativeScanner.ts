@@ -3,6 +3,8 @@ export interface NativeScanOutput {
   byFile: Record<string, string[]>;
   files: number;
   unparsed: string[];
+  /** file → markers found (native >= 0.3.0; absent from older binaries) */
+  marked?: Record<string, string[]>;
   ms: number;
 }
 
@@ -14,6 +16,7 @@ export interface NativeBinding {
     excludeRegex: string[];
     cacheFile?: string;
     cacheKey: string;
+    markers?: string[];
   }): NativeScanOutput;
   extractLiterals(code: string, filename: string): { literals: string[]; parsed: boolean };
 }

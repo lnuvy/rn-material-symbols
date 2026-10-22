@@ -65,6 +65,8 @@ pub struct JsScanOptions {
     pub cache_file: Option<String>,
     /// Cache key; a fingerprint of `names` is appended internally.
     pub cache_key: String,
+    /// Substrings reported per file in `marked` (e.g. the library's module name). Part of the cache key.
+    pub markers: Option<Vec<String>>,
 }
 
 #[napi(object)]
@@ -77,6 +79,8 @@ pub struct JsScanResult {
     pub files: u32,
     /// Files that did not parse and were scanned with the regex fallback, sorted.
     pub unparsed: Vec<String>,
+    /// File → markers found in it; only files with at least one; keys in sorted path order.
+    pub marked: BTreeMap<String, Vec<String>>,
     pub ms: f64,
 }
 
@@ -91,6 +95,7 @@ pub fn scan(options: JsScanOptions) -> napi::Result<JsScanResult> {
             exclude_regex: options.exclude_regex,
             cache_file: options.cache_file,
             cache_key: options.cache_key,
+            markers: options.markers.unwrap_or_default(),
         })
         .map_err(napi::Error::from_reason)?;
         Ok(JsScanResult {
@@ -98,6 +103,7 @@ pub fn scan(options: JsScanOptions) -> napi::Result<JsScanResult> {
             by_file: out.by_file.into_iter().collect(),
             files: out.files,
             unparsed: out.unparsed,
+            marked: out.marked.into_iter().collect(),
             ms: out.ms,
         })
     })

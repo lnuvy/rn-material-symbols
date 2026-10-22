@@ -3,7 +3,7 @@ import Svg, { Path } from 'react-native-svg';
 import registryModule from 'rn-material-symbols/registry';
 import { VIEW_BOX } from './constants';
 import { missingIconMessage } from './messages';
-import type { IconData, MaterialIconProps, MaterialSymbolVariant, Registry } from './types';
+import type { MaterialIconProps, MaterialSymbolVariant, Registry, RegistryIcon } from './types';
 
 const registry = registryModule as Registry;
 const warned = new Set<string>();
@@ -24,14 +24,14 @@ function latestRegistry(): Registry {
   }
 }
 
-function warnIfStillMissing(variant: MaterialSymbolVariant, name: string, key: string): void {
+function warnIfStillMissing(variant: MaterialSymbolVariant, name: string, filled: boolean, key: string): void {
   const reg = latestRegistry();
-  if (resolveIcon(reg, variant, name)) {
+  if (resolvePath(reg, variant, name, filled) !== undefined) {
     // arrived with a registry update; a later genuine miss may warn again
     warned.delete(key);
     return;
   }
-  console.warn(`[rn-material-symbols] ${missingIconMessage(reg, variant, name)}`);
+  console.warn(`[rn-material-symbols] ${missingIconMessage(reg, variant, name, filled)}`);
 }
 
 const hasOwn = Object.prototype.hasOwnProperty;
@@ -41,7 +41,7 @@ const hasOwn = Object.prototype.hasOwnProperty;
  * `undefined`, which renders an empty icon. Icon lookups are not own-property checks because the Jest registry's
  * variants are lazy Proxies; the result's shape is checked instead.
  */
-export function resolveIcon(reg: Registry, variant: MaterialSymbolVariant, name: string): IconData | undefined {
+export function resolveIcon(reg: Registry, variant: MaterialSymbolVariant, name: string): RegistryIcon | undefined {
   try {
     if (typeof name !== 'string' || typeof variant !== 'string' || !reg || typeof reg !== 'object') return undefined;
     const { aliases, icons } = reg;
@@ -49,10 +49,20 @@ export function resolveIcon(reg: Registry, variant: MaterialSymbolVariant, name:
     const target = typeof alias === 'string' ? alias : name;
     const byVariant = icons && hasOwn.call(icons, variant) ? icons[variant] : undefined;
     const icon = byVariant ? byVariant[target as keyof typeof byVariant] : undefined;
-    return icon && typeof icon === 'object' && typeof icon.d === 'string' ? icon : undefined;
+    return icon && typeof icon === 'object' && (typeof icon.d === 'string' || typeof icon.f === 'string') ? icon : undefined;
   } catch {
     return undefined;
   }
+}
+
+/**
+ * The path for one shape. The generated registry ships only the shapes the app renders, so an icon can be present
+ * without the requested shape; that is reported like a missing icon.
+ */
+export function resolvePath(reg: Registry, variant: MaterialSymbolVariant, name: string, filled: boolean): string | undefined {
+  const icon = resolveIcon(reg, variant, name);
+  const d = icon ? (filled ? icon.f : icon.d) : undefined;
+  return typeof d === 'string' ? d : undefined;
 }
 
 /**
@@ -60,21 +70,21 @@ export function resolveIcon(reg: Registry, variant: MaterialSymbolVariant, name:
  * Dev waits for a possible HMR registry update and warns. Release builds have no HMR, so they log console.error at once
  * (crash and RUM tools that collect console errors then see the miss).
  */
-function reportMissing(variant: MaterialSymbolVariant, name: string): void {
+function reportMissing(variant: MaterialSymbolVariant, name: string, filled: boolean): void {
   try {
-    const key = `${String(variant)}:${String(name)}`;
+    const key = `${String(variant)}:${String(name)}:${filled ? 'f' : 'd'}`;
     if (warned.has(key)) return;
     warned.add(key);
     if (__DEV__) {
       setTimeout(() => {
         try {
-          warnIfStillMissing(variant, name, key);
+          warnIfStillMissing(variant, name, filled, key);
         } catch {
           // reporting must never take the app down
         }
       }, MISSING_ICON_WARN_DELAY_MS);
     } else {
-      console.error(`[rn-material-symbols] ${missingIconMessage(registry, variant, name)}`);
+      console.error(`[rn-material-symbols] ${missingIconMessage(registry, variant, name, filled)}`);
     }
   } catch {
     // reporting must never take the app down
@@ -91,17 +101,18 @@ export function MaterialIcon({
   style,
   ...svgProps
 }: MaterialIconProps) {
-  const icon = resolveIcon(registry, variant, name);
+  const isFilled = Boolean(filled);
+  const d = resolvePath(registry, variant, name, isFilled);
   const mergedStyle = rotate ? [{ transform: [{ rotate: `${rotate}deg` }] }, style] : style;
 
-  if (!icon) {
-    reportMissing(variant, name);
+  if (d === undefined) {
+    reportMissing(variant, name, isFilled);
     return <Svg {...svgProps} width={size} height={size} viewBox={VIEW_BOX} style={mergedStyle} />;
   }
 
   return (
     <Svg {...svgProps} width={size} height={size} viewBox={VIEW_BOX} style={mergedStyle}>
-      <Path d={filled && icon.f ? icon.f : icon.d} fill={color} />
+      <Path d={d} fill={color} />
     </Svg>
   );
 }

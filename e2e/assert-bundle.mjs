@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 // Exact-set bundle checker.
 //   node e2e/assert-bundle.mjs <bundle> --expect a,b,c [--pkg <path to installed rn-material-symbols>]
-// Text JS bundles: collect string literals and map icon paths (`d`/`f` of icons/*/*.js) to names.
+// Text JS bundles: collect string literals and map icon paths (`d`/`f` of the package data) to names.
 // Binary bundles (Hermes bytecode, or any file that is not valid UTF-8): search the raw bytes for each
 // icon path instead.
-import { readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 
@@ -42,19 +42,29 @@ try {
 }
 const binary = text === null;
 
-// pathString -> icon names, from every generated icon module (both `d` and `f`).
+// pathString -> icon names, from the package data (both `d` and `f`): icons/<variant>.json since 0.3.0, one module per
+// icon (icons/<variant>/<name>.js) before.
 const pathToNames = new Map();
+const addPath = (p, name) => {
+  if (typeof p !== 'string' || !p) return;
+  if (!pathToNames.has(p)) pathToNames.set(p, new Set());
+  pathToNames.get(p).add(name);
+};
 for (const variant of ['rounded', 'outlined', 'sharp']) {
+  const dataFile = path.join(pkgRoot, 'icons', `${variant}.json`);
+  if (existsSync(dataFile)) {
+    for (const [name, icon] of Object.entries(JSON.parse(readFileSync(dataFile, 'utf8')))) {
+      addPath(icon.d, name);
+      addPath(icon.f, name);
+    }
+    continue;
+  }
   const dir = path.join(pkgRoot, 'icons', variant);
   for (const file of readdirSync(dir)) {
     if (!file.endsWith('.js')) continue;
-    const name = file.slice(0, -3);
     const mod = require(path.join(dir, file));
-    for (const p of [mod.d, mod.f]) {
-      if (typeof p !== 'string' || !p) continue;
-      if (!pathToNames.has(p)) pathToNames.set(p, new Set());
-      pathToNames.get(p).add(name);
-    }
+    addPath(mod.d, file.slice(0, -3));
+    addPath(mod.f, file.slice(0, -3));
   }
 }
 const { MATERIAL_SYMBOL_NAMES } = require(path.join(pkgRoot, 'lib', 'generated', 'names.js'));

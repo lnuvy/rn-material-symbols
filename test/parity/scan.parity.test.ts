@@ -40,7 +40,15 @@ const sorted = (r: ScanResult) => ({
   byFile: Object.fromEntries([...r.byFile].sort()),
   files: r.files,
   unparsed: [...r.unparsed].sort(),
+  marked: Object.fromEntries([...r.marked].sort()),
 });
+/** substrings the usage collection asks for: the library import, and wrapper names found in a later round */
+const MARKERS = ['rn-material-symbols', 'AppIcon'];
+const MARKER_FILES: Record<string, string> = {
+  'src/marker/Uses.tsx': "import { MaterialIcon } from 'rn-material-symbols';\nexport const A = () => <AppIcon icon='home' />;\n",
+  'src/marker/Plain.ts': "// mentions rn-material-symbols only in a comment\nexport const n = 1;\n",
+  'src/marker/Wrapper.tsx': 'export function AppIcon() { return null; }\n',
+};
 
 // The synthetic corpus has no deep nesting and its only Flow files (FLOW_FILES) keep literals out of type positions,
 // so names, byFile, file count and (cold, no cache) unparsed must be identical. Engines emit in different orders
@@ -57,6 +65,7 @@ d('native scan matches JS scan', () => {
     for (const rel of EXCLUDED_BY_DEFAULT) write(dir, rel, "export const a = 'home';\n");
     for (const rel of PRUNED_DIRS) write(dir, rel, "export const a = 'settings';\n");
     for (const [rel, code] of Object.entries(FLOW_FILES)) write(dir, rel, code);
+    for (const [rel, code] of Object.entries(MARKER_FILES)) write(dir, rel, code);
     if (unix) {
       // symlink targets live outside the corpus, so the link is the only way to reach them
       write(outside, 'target.ts', "export const a = 'search';\n");
@@ -71,8 +80,8 @@ d('native scan matches JS scan', () => {
   });
 
   const both = (exclude: string[]) => {
-    const js = scanProject({ sources: [dir], nameSet, exclude, scanner: 'js' });
-    const rs = scanProject({ sources: [dir], nameSet, exclude, scanner: 'native' });
+    const js = scanProject({ sources: [dir], nameSet, exclude, scanner: 'js', markers: MARKERS });
+    const rs = scanProject({ sources: [dir], nameSet, exclude, scanner: 'native', markers: MARKERS });
     expect(js.engine).toBe('js');
     expect(rs.engine).toBe('native');
     expect(sorted(rs)).toEqual(sorted(js));
@@ -83,7 +92,13 @@ d('native scan matches JS scan', () => {
   test('synthetic corpus + pruning fixtures, default excludes and none', () => {
     const withDefault = both([...DEFAULT_EXCLUDE]);
     const none = both([]);
-    expect(withDefault.files).toBe(2000 + Object.keys(FLOW_FILES).length);
+    expect(withDefault.files).toBe(2000 + Object.keys(FLOW_FILES).length + Object.keys(MARKER_FILES).length);
+    // markers were exercised: both engines report the same files, markers in the order asked
+    expect(Object.fromEntries([...withDefault.marked].filter(([f]) => f.includes(`${path.sep}marker${path.sep}`)).map(([f, m]) => [path.relative(dir, f), m]))).toEqual({
+      'src/marker/Plain.ts': ['rn-material-symbols'],
+      'src/marker/Uses.tsx': ['rn-material-symbols', 'AppIcon'],
+      'src/marker/Wrapper.tsx': ['AppIcon'],
+    });
     // the Flow fixtures were exercised: native could not parse them, the JS re-extraction recovered the escaped names
     expect(withDefault.byFile.get(path.join(dir, 'src/flow/Icon.js'))).toEqual(['home', 'info']);
     expect(withDefault.byFile.get(path.join(dir, 'src/flow/Tabs.jsx'))).toEqual(['search', 'settings']);
@@ -129,5 +144,42 @@ d('JSX attribute entities through the real binary', () => {
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+// The usage collection runs the same analyzer on both engines' scan results (literals + marked files, and a second
+// marker-only scan for wrapper call sites), so the generated registry must be byte-identical.
+d('usage collection: the registry is the same with either engine', () => {
+  test('wrappers, maps, imports and a fallback, cold and warm', () => {
+    const { withMaterialSymbols } = require('../../src/metro/withMaterialSymbols') as typeof import('../../src/metro/withMaterialSymbols');
+    const IMPORT = "import { MaterialIcon } from 'rn-material-symbols';\n";
+    const files: Record<string, string> = {
+      'ui/AppIcon.tsx': `${IMPORT}export function AppIcon({ icon, active = false }: { icon: string; active?: boolean }) { return <MaterialIcon name={icon as never} filled={active} />; }`,
+      'tabs.ts': "export const TABS = [{ icon: 'settings' }, { icon: 'person' }];",
+      'icons.ts': "export function getIcon(t: string) { return t === 'a' ? 'alarm' : 'bolt'; }",
+      // not imported by the file whose use falls back, so never included
+      'other.ts': "log('search');",
+      'App.tsx': `${IMPORT}import { AppIcon } from './ui/AppIcon';\nimport { TABS } from './tabs';\nimport { getIcon } from './icons';\nexport const A = ({ t, i }: { t: string; i: number }) => <><AppIcon icon="home" active /><MaterialIcon name={TABS[i].icon} /><MaterialIcon name={getIcon(t)} /></>;`,
+    };
+    const registries: Record<string, string> = {};
+    for (const scanner of ['js', 'native'] as const) {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), `rnms-usage-parity-${scanner}-`));
+      try {
+        for (const [rel, code] of Object.entries(files)) write(root, rel, code);
+        const lines: string[] = [];
+        for (const run of ['cold', 'warm']) {
+          withMaterialSymbols({ projectRoot: root }, { watch: false, scanner, log: (l: string) => lines.push(l) });
+          const code = fs.readFileSync(path.join(root, 'node_modules', '.cache', 'rn-material-symbols', 'registry.js'), 'utf8');
+          if (run === 'warm') expect(code).toBe(registries[scanner]);
+          registries[scanner] = code;
+        }
+        expect(lines[0]).toMatch(new RegExp(` · ${scanner}$`));
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    }
+    expect(registries.native).toBe(registries.js);
+    for (const name of ['home', 'settings', 'person', 'alarm', 'bolt']) expect(registries.js).toContain(`"${name}":`);
+    expect(registries.js).not.toContain('"search"');
   });
 });

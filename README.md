@@ -62,7 +62,7 @@ import { MaterialIcon } from 'rn-material-symbols';
 | `color` | `'black'` | any `ColorValue` |
 | `filled` | `false` | FILL axis |
 | `rotate` | `0` | degrees. `style.transform` wins when both are given |
-| `variant` | `'rounded'` | `'rounded' \| 'outlined' \| 'sharp'`. Must be listed in `variants` |
+| `variant` | `'rounded'` | `'rounded' \| 'outlined' \| 'sharp'`. A variant written in your source is bundled automatically; one decided at runtime uses the `variants` option |
 
 Any other `SvgProps` are passed to the underlying `Svg`. Under the hood it renders `<Svg viewBox="0 -960 960 960">` with one `<Path>`.
 
@@ -84,6 +84,7 @@ withMaterialSymbols(config, options)
 | `watch` | auto | Rescan when files change. Auto: on for `start` and `run-*`, off for `bundle` and `export`. The env var `RN_MATERIAL_SYMBOLS_WATCH=1\|0` overrides this. |
 | `warnAboveIcons` | `800` | Print a warning with the top offending files when more icons than this are found. |
 | `cacheDir` | `<projectRoot>/node_modules/.cache/rn-material-symbols` | Where the generated registry and the scan cache live. |
+| `collect` | `'usage'` | `'usage'`: bundle the names, variants and shapes (filled or not) that `MaterialIcon` and components wrapping it actually render (see [What gets bundled](#what-gets-bundled)). `'literals'`: every icon-shaped string in your sources, both shapes (the 0.2 behavior). |
 | `scanner` | `'auto'` | `'auto' \| 'js' \| 'native'`. Which source scanner runs. `'auto'` uses the native scanner when its binary is installed and loads, else the JS scanner. `'native'` fails with a clear error when the binary is missing or broken. The env var `RN_MATERIAL_SYMBOLS_SCANNER=auto\|js\|native` overrides this. Unknown values throw. See [Performance and the native scanner](#performance-and-the-native-scanner). |
 
 Default excludes: `**/*.stories.*`, `**/*.test.*`, `**/*.spec.*`, `**/__tests__/**`, `dist/**`, `web-build/**` (the last two are anchored at each source root and cover Expo web export output).
@@ -91,24 +92,31 @@ Default excludes: `**/*.stories.*`, `**/*.test.*`, `**/*.spec.*`, `**/__tests__/
 Each Metro start prints one line, for example:
 
 ```
-[rn-material-symbols] rounded 8 icons · 5.4 KB · aliases 1 · safelist 1 · 2 files (8ms) · js
+[rn-material-symbols] rounded 8 icons (7 unfilled · 1 filled) · 3.9 KB · aliases 1 · safelist 1 · 7 uses · 2 files (8ms) · js
 ```
 
-The last field is the scanner that ran: `js` or `native`.
+`uses` counts the traced `MaterialIcon` uses; `files included conservatively` appears when a use could not be traced (see below). The last field is the scanner that ran: `js` or `native`.
 
-## Dynamic names
+## What gets bundled
 
-The scanner reads your source with a parser (JS scanner: Babel; native: oxc) and collects string literals that are Material Symbols names. So this works, because the literals appear in your source:
+With the default `collect: 'usage'`, the plugin finds each `MaterialIcon` your code renders and works out which `name`, `variant` and `filled` it can have. Only those names, in only those shapes, are bundled: a string such as `returnKeyType: 'search'` or a log message `'home'` is not an icon.
 
-```tsx
-const TABS = [{ icon: 'home' }, { icon: 'settings' }];
-// ...
-<MaterialIcon name={tab.icon} />
+It follows:
+
+- literals, `cond ? 'a' : 'b'`, `a ?? 'b'`, template literals whose parts are known (`` `${open ? 'expand_less' : 'expand_more'}` ``), `as` casts;
+- `const` values and object or array maps in the same file or imported from another (`TABS[i].icon`, `ICONS[key]` with any key);
+- `import { MaterialIcon as Icon }`, `import * as RMS`, `const Icon = MaterialIcon`, re-exports from a barrel, and `React.createElement`;
+- **wrapper components**: a component whose `MaterialIcon` props come from its own props (`function AppIcon({ icon, active }) { return <MaterialIcon name={icon} filled={active} /> }`, `{...props}`, `memo`, `forwardRef`, wrappers of wrappers). The names and shapes come from each `<AppIcon icon="home" active />`.
+
+`filled` absent or `false` bundles the unfilled shape, `filled` or `filled={true}` the filled one, and a value decided at runtime both. An icon rendered in a shape that was not bundled shows as blank and reports it, like a missing icon.
+
+Names that only exist at runtime (a value from your server, the result of a function) cannot be traced. Such a use does not fail and is not dropped silently: the plugin bundles every icon name written in that file and in the files it imports, and prints where it happened:
+
+```
+[rn-material-symbols] src/Menu.tsx:12: name could not be resolved (the result of a function call (line 12)); included the icon names written in this file and the files it imports. List the names in withMaterialSymbols({ include }) to make this exact.
 ```
 
-Template literals work too when the names are literals inside the expressions: `` `${open ? 'expand_less' : 'expand_more'}` `` finds both. A name built by concatenation (`` `${base}_filled` ``) cannot be found.
-
-Names that only exist at runtime (for example a value from your server) cannot be found. Add them to the safelist:
+Names from your server go in the safelist (both shapes are bundled):
 
 ```js
 module.exports = withMaterialSymbols(config, { include: ['cloud_download'] });
@@ -124,7 +132,7 @@ withMaterialSymbols(config, { sources: ['src', '../../packages/ui/src'] });
 
 ## Type unions and name lists
 
-Any file that contains many icon names as string literals (a union type, a list of names for a picker) is scanned like any other file, and all of those icons get bundled. When more than `warnAboveIcons` icons are found, Metro prints the top files:
+Type positions never count. With `collect: 'literals'`, any file that contains many icon names as string literals (a list of names for a picker) is scanned like any other file, and all of those icons get bundled. When more than `warnAboveIcons` icons are found, Metro prints the top files:
 
 ```
 [rn-material-symbols] warning: more than 800 icons. A type union or a list of icon names may have been scanned. Top files:

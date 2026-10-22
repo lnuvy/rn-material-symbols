@@ -26,6 +26,8 @@ pub struct ScanOptions {
     pub cache_file: Option<String>,
     /// The caller's key; a fingerprint of `names` is appended (as JS does) before use.
     pub cache_key: String,
+    /// Substrings to look for in every file (e.g. the library's module name); reported per file in `marked`.
+    pub markers: Vec<String>,
 }
 
 #[derive(Debug)]
@@ -36,6 +38,8 @@ pub struct ScanOutput {
     /// Listed files (JS `files.length`), including any that vanished before they were read.
     pub files: u32,
     pub unparsed: Vec<String>,
+    /// Files containing at least one marker, sorted by path; markers per file in `markers` order.
+    pub marked: Vec<(String, Vec<String>)>,
     pub ms: f64,
 }
 
@@ -45,6 +49,8 @@ struct CacheEntry {
     mtime_ms: f64,
     size: u64,
     names: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    marks: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -141,7 +147,7 @@ enum FileResult {
     Error(String),
 }
 
-fn process(path: &str, cache: &HashMap<String, CacheEntry>, names: &HashSet<String>) -> FileResult {
+fn process(path: &str, cache: &HashMap<String, CacheEntry>, names: &HashSet<String>, markers: &[String]) -> FileResult {
     let fail = |e: std::io::Error| {
         if e.kind() == std::io::ErrorKind::NotFound {
             FileResult::Gone
@@ -164,6 +170,7 @@ fn process(path: &str, cache: &HashMap<String, CacheEntry>, names: &HashSet<Stri
         Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
         Err(e) => return fail(e),
     };
+    let marks: Vec<String> = markers.iter().filter(|m| code.contains(m.as_str())).cloned().collect();
     let (hits, unparsed) = if any_regex_literal(&code, |n| names.contains(n)) {
         let r = extract_guarded(&code, path);
         (r.literals.into_iter().filter(|n| names.contains(n)).collect(), !r.parsed)
@@ -171,7 +178,7 @@ fn process(path: &str, cache: &HashMap<String, CacheEntry>, names: &HashSet<Stri
         (Vec::new(), false)
     };
     FileResult::Hit {
-        entry: CacheEntry { mtime_ms: mtime.unwrap_or(0.0), size, names: hits },
+        entry: CacheEntry { mtime_ms: mtime.unwrap_or(0.0), size, names: hits, marks },
         unparsed,
         // An unparsed file is never cached: the JS side re-extracts every file reported as unparsed (Babel parses
         // Flow, and decodes escapes the regex fallback cannot), so it must be reported on warm runs too.
@@ -195,6 +202,7 @@ struct Aggregate {
     by_file: Vec<(String, Vec<String>)>,
     files: u32,
     unparsed: Vec<String>,
+    marked: Vec<(String, Vec<String>)>,
     next: BTreeMap<String, CacheEntry>,
 }
 
@@ -206,6 +214,7 @@ fn aggregate(files: &[String], results: Vec<FileResult>) -> Result<Aggregate, St
         by_file: Vec::new(),
         files: u32::try_from(files.len()).unwrap_or(u32::MAX),
         unparsed: Vec::new(),
+        marked: Vec::new(),
         next: BTreeMap::new(),
     };
     let mut all = BTreeSet::new();
@@ -221,6 +230,9 @@ fn aggregate(files: &[String], results: Vec<FileResult>) -> Result<Aggregate, St
                     all.extend(entry.names.iter().cloned());
                     agg.by_file.push((path.clone(), entry.names.clone()));
                 }
+                if !entry.marks.is_empty() {
+                    agg.marked.push((path.clone(), entry.marks.clone()));
+                }
                 if cacheable {
                     agg.next.insert(path.clone(), entry);
                 }
@@ -233,16 +245,17 @@ fn aggregate(files: &[String], results: Vec<FileResult>) -> Result<Aggregate, St
 
 /// Bump when extraction results change (a new construct is recognised, a rule is fixed): it is part of
 /// the cache key, so caches written by an older extractor are discarded instead of served stale.
-pub const EXTRACT_REVISION: u32 = 1;
+/// 2: cache entries carry `marks` (markers found in the file); the marker list is part of the key.
+pub const EXTRACT_REVISION: u32 = 2;
 
-fn full_cache_key(caller_key: &str, name_set: &HashSet<String>, revision: u32) -> String {
-    format!("{}:{}:rev{}", caller_key, name_set_fingerprint(name_set), revision)
+fn full_cache_key(caller_key: &str, name_set: &HashSet<String>, markers: &[String], revision: u32) -> String {
+    format!("{}:{}:m{}:rev{}", caller_key, name_set_fingerprint(name_set), markers.join("\u{1}"), revision)
 }
 
 pub fn scan_impl(opts: &ScanOptions) -> Result<ScanOutput, String> {
     let started = Instant::now();
     let name_set: HashSet<String> = opts.names.iter().cloned().collect();
-    let cache_key = full_cache_key(&opts.cache_key, &name_set, EXTRACT_REVISION);
+    let cache_key = full_cache_key(&opts.cache_key, &name_set, &opts.markers, EXTRACT_REVISION);
 
     // JS checks every source before listing any.
     // JS checks every source with `fs.existsSync(s)` on the raw string (so `""` is not found)
@@ -273,7 +286,7 @@ pub fn scan_impl(opts: &ScanOptions) -> Result<ScanOutput, String> {
 
     let cache = read_cache(opts.cache_file.as_deref(), &cache_key);
     let results: Vec<FileResult> =
-        workers.install(|| files.par_iter().map(|p| process(p, &cache, &name_set)).collect());
+        workers.install(|| files.par_iter().map(|p| process(p, &cache, &name_set, &opts.markers)).collect());
     let agg = aggregate(&files, results)?;
 
     if let Some(f) = &opts.cache_file {
@@ -284,6 +297,7 @@ pub fn scan_impl(opts: &ScanOptions) -> Result<ScanOutput, String> {
         by_file: agg.by_file,
         files: agg.files,
         unparsed: agg.unparsed,
+        marked: agg.marked,
         ms: started.elapsed().as_secs_f64() * 1000.0,
     })
 }
@@ -303,7 +317,7 @@ mod tests {
         ["info", "home", "settings", "search", "close", "check"].iter().map(|s| s.to_string()).collect()
     }
     fn opts(sources: Vec<String>, exclude: Vec<&str>, cache: Option<String>, key: &str) -> ScanOptions {
-        ScanOptions { sources, names: names(), exclude_regex: exclude.into_iter().map(String::from).collect(), cache_file: cache, cache_key: key.to_string() }
+        ScanOptions { sources, names: names(), exclude_regex: exclude.into_iter().map(String::from).collect(), cache_file: cache, cache_key: key.to_string(), markers: vec![] }
     }
 
     #[test]
@@ -368,7 +382,8 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(&fs::read_to_string(&cache).unwrap()).unwrap();
         assert!(v["key"].as_str().unwrap().ends_with(&format!(":rev{EXTRACT_REVISION}")));
         let names: HashSet<String> = HashSet::new();
-        assert_ne!(full_cache_key("k", &names, EXTRACT_REVISION), full_cache_key("k", &names, EXTRACT_REVISION + 1));
+        assert_ne!(full_cache_key("k", &names, &[], EXTRACT_REVISION), full_cache_key("k", &names, &[], EXTRACT_REVISION + 1));
+        assert_ne!(full_cache_key("k", &names, &[], EXTRACT_REVISION), full_cache_key("k", &names, &["rn-material-symbols".to_string()], EXTRACT_REVISION));
     }
 
     #[test]
@@ -424,7 +439,7 @@ mod tests {
 
     fn hit(names: &[&str]) -> FileResult {
         FileResult::Hit {
-            entry: CacheEntry { mtime_ms: 1.5, size: 1, names: names.iter().map(|s| s.to_string()).collect() },
+            entry: CacheEntry { mtime_ms: 1.5, size: 1, names: names.iter().map(|s| s.to_string()).collect(), marks: vec![] },
             unparsed: false,
             cacheable: true,
         }
@@ -447,7 +462,7 @@ mod tests {
     fn files_without_an_mtime_are_not_cached() {
         let files = vec!["/a.ts".to_string()];
         let r = FileResult::Hit {
-            entry: CacheEntry { mtime_ms: 0.0, size: 1, names: vec!["info".into()] },
+            entry: CacheEntry { mtime_ms: 0.0, size: 1, names: vec!["info".into()], marks: vec![] },
             unparsed: false,
             cacheable: false,
         };
@@ -490,7 +505,7 @@ mod tests {
         let base = 1_727_900_000u64;
         for i in 0..20_000u64 {
             let d = std::time::Duration::new(base + i * 7919, ((i * 104_729_003) % 1_000_000_000) as u32);
-            files.insert(format!("/f{i}"), CacheEntry { mtime_ms: duration_ms(d), size: i, names: vec![] });
+            files.insert(format!("/f{i}"), CacheEntry { mtime_ms: duration_ms(d), size: i, names: vec![], marks: vec![] });
         }
         let original: Vec<u64> = files.values().map(|e| e.mtime_ms.to_bits()).collect();
         let text = serde_json::to_string(&CacheShape { key: "k".into(), files }).unwrap();
@@ -648,5 +663,21 @@ mod tests {
         assert_eq!(out.names, vec!["home", "info"]);
         assert_eq!(out.unparsed, vec![r.join("boom.ts").to_string_lossy().to_string()]);
         assert_eq!(out.files, 2);
+    }
+
+    #[test]
+    fn markers_are_reported_per_file_and_survive_the_cache() {
+        let root = tmp();
+        write(&root, "a.tsx", "import { MaterialIcon } from 'rn-material-symbols';\nconst x = 1;");
+        write(&root, "b.ts", "export const ICONS = { a: 'info' };");
+        write(&root, "c.ts", "const Icon = 1;");
+        let cache = root.join(".cache.json").to_string_lossy().into_owned();
+        let mut o = opts(vec![root.to_string_lossy().into_owned()], vec![], Some(cache), "k");
+        o.markers = vec!["rn-material-symbols".into(), "Icon".into()];
+        for _ in 0..2 {
+            let out = scan_impl(&o).unwrap();
+            let marked: Vec<(String, Vec<String>)> = out.marked.iter().map(|(f, m)| (Path::new(f).file_name().unwrap().to_string_lossy().into_owned(), m.clone())).collect();
+            assert_eq!(marked, vec![("a.tsx".into(), vec!["rn-material-symbols".into(), "Icon".into()]), ("c.ts".into(), vec!["Icon".into()])]);
+        }
     }
 }

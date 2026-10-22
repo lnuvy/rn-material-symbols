@@ -47,6 +47,9 @@ export default function App() {
   const [checked] = useState(true);
   const [open] = useState(false);
   const toggle = `${open ? 'expand_less' : 'expand_more'}` as MaterialSymbolName;
+  // icon-shaped strings that are not icons: the usage collection (0.3.0) must leave them out of the bundle
+  const keyboard = { returnKeyType: 'search', mode: 'home' };
+  void keyboard;
   return (
     <View>
       <MaterialIcon name="info" />
@@ -82,7 +85,8 @@ import renderer, { act } from 'react-test-renderer';
 import { Path } from 'react-native-svg';
 import { MaterialIcon } from 'rn-material-symbols';
 
-const info = require('rn-material-symbols/icons/rounded/info');
+// the package's icon data (icons/<variant>.json since 0.3.0); package.json is an exported subpath
+const info = require(require('path').join(require('path').dirname(require.resolve('rn-material-symbols/package.json')), 'icons', 'rounded.json')).info;
 
 test('renders the info path', () => {
   let tree!: renderer.ReactTestRenderer;

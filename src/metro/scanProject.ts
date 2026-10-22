@@ -15,6 +15,8 @@ export interface ScanOptions {
   loadNative?: () => NativeBinding | null;
   /** this package's version; when set, a native binary whose major.minor differs is reported via `nativeVersionWarning` */
   expectedNativeVersion?: string;
+  /** substrings reported per file in `marked` (e.g. the library's module name) */
+  markers?: string[];
 }
 
 export interface ScanResult {
@@ -22,6 +24,8 @@ export interface ScanResult {
   byFile: Map<string, string[]>;
   files: number;
   unparsed: string[];
+  /** file → markers found in it (only files with at least one) */
+  marked: Map<string, string[]>;
   ms: number;
   engine: 'js' | 'native';
   fallbackReason?: string;
@@ -30,7 +34,7 @@ export interface ScanResult {
 
 interface CacheShape {
   key: string;
-  files: Record<string, { mtimeMs: number; size: number; names: string[] }>;
+  files: Record<string, { mtimeMs: number; size: number; names: string[]; marks?: string[] }>;
 }
 
 const SOURCE_EXT = /\.(?:[cm]?[jt]sx?)$/;
@@ -126,9 +130,9 @@ function writeCache(file: string, cache: CacheShape): void {
   }
 }
 
-function scanProjectJs({ sources, nameSet, exclude = [], cacheFile, cacheKey: userKey = 'default' }: ScanOptions): Omit<ScanResult, 'engine'> {
+function scanProjectJs({ sources, nameSet, exclude = [], cacheFile, cacheKey: userKey = 'default', markers = [] }: ScanOptions): Omit<ScanResult, 'engine'> {
   const started = Date.now();
-  const cacheKey = `${userKey}:${nameSetFingerprint(nameSet)}`;
+  const cacheKey = `${userKey}:${nameSetFingerprint(nameSet)}:m${markers.join('\u0001')}`;
   for (const s of sources) {
     if (!fs.existsSync(s)) throw new Error(`[rn-material-symbols] source not found: ${path.resolve(s)} (check the 'sources' option)`);
   }
@@ -137,19 +141,23 @@ function scanProjectJs({ sources, nameSet, exclude = [], cacheFile, cacheKey: us
   const nextCache: CacheShape = { key: cacheKey, files: {} };
   const names = new Set<string>();
   const byFile = new Map<string, string[]>();
+  const marked = new Map<string, string[]>();
   const unparsed: string[] = [];
 
   const files = [...new Set(sources.flatMap((s) => listSourceFiles(path.resolve(s), excludeRes)))];
   for (const file of files) {
     let hits: string[];
+    let marks: string[] = [];
     let stat: fs.Stats;
     try {
       stat = fs.statSync(file);
       const cached = cache.files[file];
       if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) {
         hits = cached.names;
+        marks = cached.marks ?? [];
       } else {
         const code = fs.readFileSync(file, 'utf8');
+        marks = markers.filter((m) => code.includes(m));
         const hasCandidate = [...code.matchAll(CANDIDATE)].some((m) => nameSet.has(m[2]));
         if (hasCandidate) {
           const { literals, parsed } = extractLiterals(code, file);
@@ -163,13 +171,14 @@ function scanProjectJs({ sources, nameSet, exclude = [], cacheFile, cacheKey: us
       if (isENOENT(e)) continue; // removed between listing and read (e.g. Metro saving a file mid-scan)
       throw e;
     }
-    nextCache.files[file] = { mtimeMs: stat.mtimeMs, size: stat.size, names: hits };
+    nextCache.files[file] = { mtimeMs: stat.mtimeMs, size: stat.size, names: hits, ...(marks.length > 0 ? { marks } : {}) };
     if (hits.length > 0) byFile.set(file, hits);
+    if (marks.length > 0) marked.set(file, marks);
     for (const h of hits) names.add(h);
   }
 
   if (cacheFile) writeCache(cacheFile, nextCache);
-  return { names, byFile, files: files.length, unparsed, ms: Date.now() - started };
+  return { names, byFile, files: files.length, unparsed, marked, ms: Date.now() - started };
 }
 
 /**
@@ -254,13 +263,18 @@ export function scanProject(options: ScanOptions): ScanResult {
       cacheFile: nativeCacheFile(options.cacheFile),
       // the binary version is part of the key: a different extractor must not reuse another one's results
       cacheKey: `${options.cacheKey ?? 'default'}:${native.version()}:${nameSetFingerprint(options.nameSet)}`,
+      ...(options.markers && options.markers.length > 0 ? { markers: options.markers } : {}),
     });
+    if (options.markers && options.markers.length > 0 && !out.marked) {
+      throw new Error(`rn-material-symbols-scanner-native ${native.version()} does not report markers (needs 0.3.0 or later)`);
+    }
     const { names, byFile, unparsed } = reextractUnparsed(out, options.nameSet);
     return {
       names,
       byFile,
       files: out.files,
       unparsed,
+      marked: new Map(Object.entries(out.marked ?? {})),
       ms: out.ms, // engine-reported; excludes the JS re-extraction of unparsed files
       engine: 'native',
       ...(nativeVersionWarning ? { nativeVersionWarning } : {}),

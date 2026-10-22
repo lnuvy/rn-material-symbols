@@ -7,9 +7,10 @@ export function formatDataJson(icons: Record<string, IconData>): string {
   return `{\n${lines.join(',\n')}\n}\n`;
 }
 
-export function renderIconModule(icon: IconData): string {
-  const data: IconData = icon.f === undefined ? { d: icon.d } : { d: icon.d, f: icon.f };
-  return `module.exports=${JSON.stringify(data)};\n`;
+/** icons/<variant>.json: compact, keys sorted so the file is reproducible. */
+export function renderVariantData(icons: Record<string, IconData>): string {
+  const sorted = Object.fromEntries(Object.keys(icons).sort().map((name) => [name, icons[name]]));
+  return `${JSON.stringify(sorted)}\n`;
 }
 
 export function renderNamesModule(names: string[], aliases: Record<string, string>, legacy: string[]): string {

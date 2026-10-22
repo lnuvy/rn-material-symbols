@@ -29,6 +29,8 @@ export interface JsScanOptions {
   cacheFile?: string
   /** Cache key; a fingerprint of `names` is appended internally. */
   cacheKey: string
+  /** Substrings reported per file in `marked` (e.g. the library's module name). Part of the cache key. */
+  markers?: Array<string>
 }
 
 export interface JsScanResult {
@@ -40,6 +42,8 @@ export interface JsScanResult {
   files: number
   /** Files that did not parse and were scanned with the regex fallback, sorted. */
   unparsed: Array<string>
+  /** File → markers found in it; only files with at least one; keys in sorted path order. */
+  marked: Record<string, Array<string>>
   ms: number
 }
 

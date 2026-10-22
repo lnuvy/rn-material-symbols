@@ -38,7 +38,6 @@
       "default": "./lib/index.js"
     },
     "./registry": "./registry.js",
-    "./icons/*": "./icons/*.js",
     "./metro": {
       "types": "./metro.d.ts",
       "default": "./metro.js"
